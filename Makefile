@@ -1,9 +1,10 @@
-.PHONY: build test fmt install clean lint
+.PHONY: build test fmt install clean lint all
 
-BINARY=tpatch
+BINARY=bin/tpatch
 BUILD_DIR=./cmd/tpatch
 
 build:
+	@mkdir -p bin
 	go build -o $(BINARY) $(BUILD_DIR)
 
 test:
@@ -20,6 +21,6 @@ install:
 	go install $(BUILD_DIR)
 
 clean:
-	rm -f $(BINARY)
+	rm -rf bin/
 
 all: fmt lint test build

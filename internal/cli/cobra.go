@@ -19,7 +19,7 @@ import (
 	"github.com/tesserabox/tesserapatch/internal/workflow"
 )
 
-const version = "0.4.0"
+const version = "0.4.1"
 
 // Execute runs the tpatch CLI root command.
 func Execute() int {

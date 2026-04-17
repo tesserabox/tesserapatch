@@ -1,13 +1,36 @@
-# Compiled binary
-tpatch
+# Derived from github/gitignore/Go.gitignore + project-specific rules.
+# https://github.com/github/gitignore/blob/main/Go.gitignore
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# Local build artifacts (Makefile writes here; see `make build`).
+# A bare `tpatch` pattern would shadow `cmd/tpatch/`, so we funnel all
+# binary output into /bin/ instead. See 2026-04-17 incident.
+/bin/
 
 # Test repo clones (large, reproducible from upstream)
 tests/copilot-api*/
-
-# Go build artifacts
-*.exe
-*.test
-*.out
 
 # OS files
 .DS_Store
@@ -15,6 +38,6 @@ Thumbs.db
 
 # IDE
 .idea/
+.vscode/
 *.swp
 *.swo
-.vscode/
