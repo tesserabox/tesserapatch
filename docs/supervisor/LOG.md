@@ -4,7 +4,37 @@
 
 ---
 
-## 2026-04-17 — Distribution Setup (module rename + CI workflow) — PENDING REVIEW
+## 2026-04-17 — Native Copilot Auth Research + PRD — PENDING REVIEW
+
+**Task**: Plan what it takes to have "native" copilot auth as a tpatch provider; verify whether copilot-api is officially supported (it is not) and whether github/copilot-cli is open source (it is not).
+**Implementer**: Planning agent
+**Verdict**: **PENDING** (plan only, no code)
+
+### Deliverables
+- `docs/prds/PRD-native-copilot-auth.md` — options matrix (A–E), two-phase recommendation (M10 managed proxy, M11 opt-in native PAT provider), explicit rejection of shelling out to `copilot` CLI.
+- Confirmed via the `tesserabox/copilot-api` README that it is reverse-engineered, unsupported by GitHub, and subject to abuse-detection warnings.
+- Confirmed via the `github/copilot-cli` repo contents that the CLI is closed-source (only README/install.sh/changelog/LICENSE are published) and the only sanctioned auth surface is `/login` OAuth or a PAT with "Copilot Requests" permission — no documented HTTP endpoint.
+
+### Checklist
+- [x] Compiles — no code change in this session
+- [x] Tests pass — unchanged (last run post-v0.3.0 all green)
+- [x] Formatted — unchanged
+- [x] Secrets safe — PRD recommends env-var-reference pattern unchanged
+- [x] Matches SPEC — PRD respects stable `Provider` interface
+- [x] Handoff accurate — CURRENT.md rewritten; distribution entry archived to HISTORY.md
+- [ ] ADRs for technical decisions — ADR-004 deferred until the open legal question is answered
+
+### Notes
+- Key finding: there is no officially documented public Copilot HTTP endpoint, so every "native" path is on reverse-engineered surface. The PRD faces this head-on and recommends going no faster than the policy allows.
+- The PRD intentionally rejects shelling out to `copilot` CLI (Option D) because each prompt burns a premium request and copilot re-runs its own agent loop — incompatible with tpatch's deterministic workflow phases.
+- M11 (native PAT provider) is soft-blocked on a policy question: can a third-party tool legitimately identify as an editor against `api.githubcopilot.com`? If "no", Phase 1 managed proxy is the ceiling.
+
+### Action Taken
+Session ended pending supervisor approval of the PRD. No code merged; v0.3.0 was tagged earlier in this session and is ready to push.
+
+---
+
+## 2026-04-17 — Distribution Setup (module rename + CI workflow) — APPROVED
 
 **Task**: Make `go install` work and add a free CI workflow.
 **Implementer**: Distribution agent

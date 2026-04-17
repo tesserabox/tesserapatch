@@ -89,9 +89,33 @@ See `docs/milestones/M9-interactive-harness.md` for task list.
 
 **Result**: No third-party provider SDKs adopted (stdlib suffices for our narrow `Check`+`Generate` surface). Added `tpatch provider set --preset` for one-line vendor switching. Wrote harness integration guides for codex and Copilot CLI. Rewrote AGENTS.md context-preservation rules with a per-trigger cadence cheatsheet. See `docs/adrs/ADR-003-sdk-evaluation.md`.
 
-## M10+ — Future
+## Distribution (2026-04-17) — `go install` + CI workflow + v0.3.0 release ✅
 
-- M10 — Cost tracking and token budgeting
-- M11 — CI/CD integration (GitHub Actions)
-- M12 — Multi-repo orchestration
-- M13 — Web dashboard
+**Goal**: Make `go install github.com/tesserabox/tesserapatch/cmd/tpatch@latest` work and add a free CI workflow.
+
+**Result**: Renamed the module path to match the repo (`github.com/tesserabox/tesserapatch`). Added `.github/workflows/ci.yml` (matrix ubuntu+macOS, `go-version-file: go.mod`, gofmt/vet/build/test/install smoke). Tagged `v0.3.0` locally; ready to push.
+
+## Planning (2026-04-17) — Native Copilot auth research + PRD ✅
+
+**Goal**: Plan a "native" Copilot auth provider. Confirm whether the existing `copilot-api` proxy is officially supported and whether `github/copilot-cli` is open source.
+
+**Result**: Confirmed `copilot-api` is reverse-engineered and explicitly unsupported by GitHub; confirmed `github/copilot-cli` is closed-source (only README/install/changelog/LICENSE published). Wrote `docs/prds/PRD-native-copilot-auth.md` with a two-phase recommendation (M10 managed proxy, M11 opt-in native PAT provider). Shelling out to the `copilot` CLI is explicitly rejected — it burns premium requests and re-runs its own agent loop. M11 is soft-blocked on a ToS question (can tpatch send editor headers against `api.githubcopilot.com`?).
+
+## M10 — Managed Copilot Proxy (planned, not started)
+
+**Goal**: Wrap `copilot-api` lifecycle so a user can `tpatch provider copilot-start/stop/status` without juggling a separate terminal.
+
+**Scope**: Install-check, background `copilot-api start` supervision, PID/port tracked in `.tpatch/provider-runtime.json` (gitignored), auto-start hook on `tpatch analyze` when preset is `copilot` and proxy is down, prominent abuse-detection warning on first run. No change to the `Provider` interface.
+
+## M11 — Native Copilot Provider (opt-in, soft-blocked)
+
+**Goal**: First-party Go provider speaking directly to `api.githubcopilot.com` using a PAT with Copilot Requests permission. Removes the Node/Bun dependency but uses the same unsupported endpoint as copilot-api.
+
+**Gate**: Requires `provider.copilot_native_optin: true` in config + acceptance of an abuse-detection warning. Blocked pending a legal review of editor-header usage (see PRD open question 1).
+
+## M12+ — Future
+
+- Cost tracking and token budgeting
+- Multi-repo orchestration
+- Web dashboard
+
