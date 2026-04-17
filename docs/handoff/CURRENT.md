@@ -37,8 +37,8 @@
 ## Key Decisions in PRD
 - **Reject** shelling out to `copilot` CLI (Option D): not a provider, each prompt burns a premium request, re-runs its own agent loop.
 - **Phase 1 (M10)**: auto-manage copilot-api proxy. Requires user to have the proxy installed (we print install instructions, do not silently install). Defaults to rate-limit 30s + wait. Writes `.tpatch/provider-runtime.json` for lifecycle management.
-- **Phase 2 (M11) opt-in only**: native PAT provider (`type: copilot-native`) calling `api.githubcopilot.com` directly. Same unsupported endpoint as copilot-api but no Node/Bun dep. Gated by `provider.copilot_native_optin: true` + mandatory AUP warning on first run.
-- **Open question** captured: does GitHub's ToS permit a third-party tool to identify as an editor against their Copilot endpoint? Needs answer before M11 lands.
+- **Phase 2 (M11) opt-in only**: native OAuth device-flow provider (`type: copilot-native`) calling `api.githubcopilot.com` directly — **blueprint: port anomalyco/opencode's `CopilotAuthPlugin`** which proves we do NOT need copilot-api's session-token exchange. ~200 LOC of Go. New `tpatch provider copilot-login` command runs the device flow once; Bearer token stored in `~/.config/tpatch/copilot-auth.json`.
+- **Open question** captured: does GitHub's ToS permit a third-party tool to identify as an editor against their Copilot endpoint? opencode ships this openly today with no observed GitHub action — establishes precedent but not legal clearance.
 
 ## Blockers
 - None for the PRD itself.

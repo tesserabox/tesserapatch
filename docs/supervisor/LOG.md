@@ -11,9 +11,10 @@
 **Verdict**: **PENDING** (plan only, no code)
 
 ### Deliverables
-- `docs/prds/PRD-native-copilot-auth.md` — options matrix (A–E), two-phase recommendation (M10 managed proxy, M11 opt-in native PAT provider), explicit rejection of shelling out to `copilot` CLI.
+- `docs/prds/PRD-native-copilot-auth.md` — options matrix (A–E), two-phase recommendation (M10 managed proxy, M11 opt-in native OAuth-device-flow provider), explicit rejection of shelling out to `copilot` CLI.
 - Confirmed via the `tesserabox/copilot-api` README that it is reverse-engineered, unsupported by GitHub, and subject to abuse-detection warnings.
 - Confirmed via the `github/copilot-cli` repo contents that the CLI is closed-source (only README/install.sh/changelog/LICENSE are published) and the only sanctioned auth surface is `/login` OAuth or a PAT with "Copilot Requests" permission — no documented HTTP endpoint.
+- **Confirmed via anomalyco/opencode source** that a much simpler native path is proven in production: OAuth device flow against `github.com` with the well-known editor client ID (`Ov23li8tweQw6odWQebz`), GitHub OAuth access token used directly as Bearer on `api.githubcopilot.com`. **No session-token exchange required** — this removes the biggest implementation-cost concern from the initial draft of the PRD. M11 is now ~200 LOC of Go rather than a full copilot-api reimplementation.
 
 ### Checklist
 - [x] Compiles — no code change in this session

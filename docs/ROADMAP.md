@@ -109,7 +109,9 @@ See `docs/milestones/M9-interactive-harness.md` for task list.
 
 ## M11 — Native Copilot Provider (opt-in, soft-blocked)
 
-**Goal**: First-party Go provider speaking directly to `api.githubcopilot.com` using a PAT with Copilot Requests permission. Removes the Node/Bun dependency but uses the same unsupported endpoint as copilot-api.
+**Goal**: First-party Go provider speaking directly to `api.githubcopilot.com` after an OAuth device flow — port of anomalyco/opencode's proven pattern. Removes the Node/Bun dependency.
+
+**Blueprint**: opencode's `packages/opencode/src/plugin/github-copilot/copilot.ts` — OAuth device flow with editor client ID `Ov23li8tweQw6odWQebz`, Bearer token used directly against `api.githubcopilot.com` (no session-token exchange), `x-initiator: agent` header. ~200 LOC of Go.
 
 **Gate**: Requires `provider.copilot_native_optin: true` in config + acceptance of an abuse-detection warning. Blocked pending a legal review of editor-header usage (see PRD open question 1).
 

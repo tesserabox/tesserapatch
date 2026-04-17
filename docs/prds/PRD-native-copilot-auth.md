@@ -38,7 +38,25 @@ The README documents the official auth options:
 
 Neither option exposes a documented OpenAI-compatible endpoint that a third-party Go process can call. The CLI is an interactive TUI; it is not a protocol.
 
-### 2.3 Conclusion
+### 2.3 opencode (anomalyco/opencode) — proven in-process pattern
+
+opencode ships an in-process Copilot integration (`packages/opencode/src/plugin/github-copilot/copilot.ts`) that is notably simpler than copilot-api. It does **not** run a proxy and does **not** exchange OAuth tokens for short-lived Copilot session tokens. The flow is:
+
+1. **OAuth device flow against `github.com`** (fully documented, officially supported endpoints):
+   - `POST https://github.com/login/device/code` with `client_id=Ov23li8tweQw6odWQebz`, `scope=read:user`.
+   - Poll `POST https://github.com/login/oauth/access_token` with the device code until `access_token` is returned.
+   - `Ov23li8tweQw6odWQebz` is the well-known editor-plugin client ID shared across Neovim/Zed/aider/opencode integrations — not a secret and not specific to any one tool.
+2. **Use the GitHub OAuth access token directly as Bearer** against `https://api.githubcopilot.com/*`:
+   - `GET /models` to enumerate available models.
+   - `POST /chat/completions` (OpenAI-compatible) or `POST /v1/messages` (Anthropic-compatible) for generation.
+3. **Editor identification headers**: `User-Agent: opencode/<version>`, `Openai-Intent: conversation-edits`, `x-initiator: user|agent`, optional `Copilot-Vision-Request`.
+4. **GitHub Enterprise support**: OAuth against the enterprise domain; Copilot API at `https://copilot-api.<enterprise-domain>`.
+
+Key implication: **copilot-api's session-token dance (`/copilot_internal/v2/token`) is not required** — GitHub honors the raw OAuth access token on `api.githubcopilot.com`. This removes the single biggest source of brittleness we assumed in the earlier draft of this PRD.
+
+opencode is actively maintained, has many thousands of users, and uses this path as its primary Copilot integration — which is the closest thing to "proven by third-party precedent" we can get for an unsanctioned surface.
+
+### 2.4 Conclusion
 
 There is, **as of 2026-04**, no officially documented HTTP endpoint that a tool like tpatch can call to reach GitHub Copilot. Every "native Copilot" path for a non-GitHub tool is either:
 
@@ -51,7 +69,7 @@ There is, **as of 2026-04**, no officially documented HTTP endpoint that a tool 
 |--------|-----------|-----------------------|---------------------|------------------|----|
 | **A. Status quo** | User runs copilot-api, tpatch connects to localhost:4141 | No | Zero (shipped) | Medium — abuse detection applies | Requires external setup |
 | **B. Managed proxy** | tpatch auto-installs & manages copilot-api lifecycle | No (same as A) | Medium | Same as A | One-command |
-| **C. Native PAT provider** | tpatch calls `api.githubcopilot.com` directly with a PAT | No (endpoint undocumented) | High (reimplement proxy in Go) | Same as A but without Node dep | One-command, single binary |
+| **C. Native OAuth device-flow provider** | tpatch calls `api.githubcopilot.com` directly after OAuth device flow — same as opencode | No (endpoint undocumented, but auth *is* documented) | Medium (≈200 LOC Go; opencode's TS is ~350 LOC) | Same as A but without Node dep | `tpatch provider copilot-login` then one-command |
 | **D. Shell out to `copilot` CLI** | tpatch spawns `copilot -p <prompt>` per phase | Official | Low | Low — sanctioned, but quota-hungry | Burns premium requests; structured output fragile; copilot re-runs its own agent loop |
 | **E. MCP-based** | If Copilot CLI publishes an MCP server mode, tpatch is a client | Speculative | Depends | Low once available | Clean |
 
@@ -74,17 +92,22 @@ Make the copilot-api path feel native without pretending it is.
 
 **Why this first**: it keeps tpatch honest (we don't own the endpoint), reduces setup friction by ~80%, and does not require us to reimplement anything GitHub might change.
 
-### Phase 2 — M11: Native PAT provider (Option C) — feature-flagged, opt-in
+### Phase 2 — M11: Native OAuth-device-flow provider (Option C) — feature-flagged, opt-in
 
-For users who don't want a Node proxy running:
+For users who don't want a Node proxy running. **Blueprint: port opencode's `CopilotAuthPlugin` to Go.**
 
 - Add `internal/provider/copilot_native.go` implementing the `Provider` interface against `api.githubcopilot.com` directly.
-- Config: `type: copilot-native`, `auth_env: GITHUB_TOKEN`, PAT scope "Copilot Requests".
-- Headers replicated from copilot-api's known-good set (Editor-Version, Editor-Plugin-Version, Copilot-Integration-Id, OpenAI-Organization, etc.).
+- **Auth**: OAuth device flow against `github.com/login/device/code` + `login/oauth/access_token` using the well-known editor client ID `Ov23li8tweQw6odWQebz`. New command `tpatch provider copilot-login` runs the flow once; token stored in `~/.config/tpatch/copilot-auth.json` (chmod 0600) — **not** in `.tpatch/` (which is per-repo).
+- **Config**: `type: copilot-native`, `base_url: https://api.githubcopilot.com` (or enterprise variant), no `auth_env` — credentials come from the auth file.
+- **Transport**: GitHub OAuth access token used directly as Bearer; no session-token exchange (proven by opencode). Headers: `User-Agent: tpatch/<version>`, `Openai-Intent: conversation-edits`, `x-initiator: agent` (all tpatch calls are agent-initiated from GitHub's perspective since the user is not in the loop).
+- **GitHub Enterprise**: same flow with user-supplied domain; Copilot API at `https://copilot-api.<domain>`.
+- **Models**: call `GET /models` on first use to discover what the user's Copilot plan exposes; cache in `copilot-auth.json`.
 - **Opt-in gate**: must be enabled via `tpatch config set provider.copilot_native_optin true` *and* requires a non-empty warning acknowledgement. First-run prints the full AUP quote.
 - Document as experimental; may break; user assumes risk.
 
-**Why opt-in**: we replicate the same unsupported surface as copilot-api. The only material gain is "no Node/Bun dependency." That is not enough to justify on-by-default.
+**Why opt-in even though opencode does it by default**: opencode is an agentic TUI where the user is in the loop each turn. tpatch calls the same endpoint from a non-interactive agent across four phases per feature, which is a higher-volume usage pattern more likely to trip abuse detection. Making it opt-in preserves user agency.
+
+**Why this is now much cheaper than the earlier draft of this PRD assumed**: opencode proves we do **not** need to reimplement copilot-api's session-token refresh dance. The native provider is essentially `OpenAICompatible` + an extra `x-initiator` header + a device-flow login command.
 
 ### Explicitly **not** doing
 
@@ -152,11 +175,19 @@ Phase 2 ships when:
 
 ## 8. Open Questions
 
-1. **Can we legally ship a header set that identifies tpatch as an "editor" to GitHub's Copilot endpoint?** Needs a quick legal/policy check. If "no", Phase 2 is blocked and we stay on Phase 1 indefinitely. (ADR-004 when answered.)
+1. **Can we legally ship a header set that identifies tpatch as an "editor" to GitHub's Copilot endpoint?** Needs a quick legal/policy check. anomalyco/opencode ships this pattern openly with no observed action from GitHub, which establishes third-party precedent but is not a legal opinion. If the answer is "no", Phase 2 is blocked and we stay on Phase 1 indefinitely. (ADR-004 when answered.)
 2. **Does GitHub plan to publish an official OpenAI-compatible Copilot endpoint?** If yes, Phase 2 gets dropped in favor of the official surface. Worth asking on GitHub's Copilot Discussions before building.
 3. **Should `tpatch provider copilot-start` also offer Docker-backed invocation?** A Docker path is lower-friction on Linux servers but heavier on macOS. Probably out of scope for M10; revisit if requested.
+4. **Should we use our own OAuth client ID or the shared editor one (`Ov23li8tweQw6odWQebz`)?** Using the shared ID matches opencode/Zed/Neovim/aider precedent and is what works today. Registering our own would be cleaner in theory but is likely to be rejected by GitHub for a third-party tool targeting Copilot. Default: use the shared one and document it.
 
-## 9. Out of Scope
+## 9. References
+
+- anomalyco/opencode — `packages/opencode/src/plugin/github-copilot/copilot.ts` (OAuth device flow + direct Bearer against `api.githubcopilot.com`, no session-token exchange).
+- anomalyco/opencode — `packages/opencode/src/plugin/github-copilot/models.ts` (model discovery at `GET /models`).
+- tesserabox/copilot-api — current proxy, reverse-engineered, unsupported per its own README.
+- github/copilot-cli — closed-source binary; only `/login` OAuth and PAT documented, no HTTP protocol exposed.
+
+## 10. Out of Scope
 
 - Embedding copilot-api as a Go port (rewriting a Node proxy in Go is a separate project — option C's *internal implementation*, not a separate product).
 - Token refresh UX beyond what copilot-api already provides.
