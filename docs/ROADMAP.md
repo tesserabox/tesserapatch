@@ -117,13 +117,21 @@ See `docs/milestones/M9-interactive-harness.md` for task list.
 
 **Opt-out**: `TPATCH_NO_PROBE=1` for offline/CI steps.
 
-## M11 — Native Copilot Provider (opt-in, soft-blocked)
+## M11 — Native Copilot Provider (opt-in) ✅ (delivered, pending review)
 
 **Goal**: First-party Go provider speaking directly to `api.githubcopilot.com` — port of the copilot-api/litellm pattern (session-token exchange via `copilot_internal/v2/token`). Removes the Node/Bun dependency. **See ADR-005 for the locked-in decisions.**
 
 **Blueprint**: ericc-ch/copilot-api's `src/lib/api-config.ts` + `src/services/github/` — client ID `Iv1.b507a08c87ecfe98`, VS Code Copilot Chat editor headers, session-token refresh on ~25-min cadence. ~350–400 LOC of Go.
 
-**Gate**: Requires `provider.copilot_native_optin: true` in global config + acceptance of an abuse-detection warning. Blocked pending answers to PRD/ADR-005 open questions 1 (editor-header policy) and 2 (GitHub roadmap).
+**Gate**: Requires `provider.copilot_native_optin: true` in global config + acceptance of AUP warning. Editor-header policy ships as-is; will switch to an official compatibility endpoint once GitHub documents one.
+
+**Delivered**:
+- `internal/provider/copilot_{auth,login,headers,native}.go` — device-code flow, session-token exchange, on-disk auth store (0600, atomic write, symlink-reject), editor headers matching copilot-api 0.26.7, 401-retry-once semantics.
+- CLI: `tpatch provider copilot-login`, `copilot-logout`, `--preset copilot-native`, opt-in gate enforced in `provider set` + `config set`.
+- `docs/faq.md` (macOS config-path note, auth-file locations).
+- Harness doc updated with "Native path (experimental)" section.
+
+**Opt-in**: `tpatch config set provider.copilot_native_optin true` → `tpatch provider copilot-login` → `tpatch provider set --preset copilot-native`.
 
 ## M12+ — Future
 

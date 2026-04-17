@@ -19,7 +19,7 @@ import (
 	"github.com/tesserabox/tesserapatch/internal/workflow"
 )
 
-const version = "0.3.0"
+const version = "0.4.0-dev"
 
 // Execute runs the tpatch CLI root command.
 func Execute() int {
@@ -692,7 +692,12 @@ func providerCmd() *cobra.Command {
 		Use:   "provider",
 		Short: "Manage LLM provider settings",
 	}
-	cmd.AddCommand(providerCheckCmd(), providerSetCmd())
+	cmd.AddCommand(
+		providerCheckCmd(),
+		providerSetCmd(),
+		providerCopilotLoginCmd(),
+		providerCopilotLogoutCmd(),
+	)
 	return cmd
 }
 
@@ -743,7 +748,7 @@ func providerSetCmd() *cobra.Command {
 			if preset, _ := cmd.Flags().GetString("preset"); preset != "" {
 				p, ok := providerPresets[strings.ToLower(preset)]
 				if !ok {
-					return fmt.Errorf("unknown preset %q (valid: copilot, openai, openrouter, anthropic, ollama)", preset)
+					return fmt.Errorf("unknown preset %q (valid: copilot, copilot-native, openai, openrouter, anthropic, ollama)", preset)
 				}
 				cfg.Provider.Type = p.Type
 				cfg.Provider.BaseURL = p.BaseURL
@@ -751,8 +756,8 @@ func providerSetCmd() *cobra.Command {
 				cfg.Provider.AuthEnv = p.AuthEnv
 			}
 			if v, _ := cmd.Flags().GetString("type"); v != "" {
-				if v != "openai-compatible" && v != "anthropic" {
-					return fmt.Errorf("invalid provider type %q (valid: openai-compatible, anthropic)", v)
+				if v != "openai-compatible" && v != "anthropic" && v != provider.CopilotNativeType {
+					return fmt.Errorf("invalid provider type %q (valid: openai-compatible, anthropic, copilot-native)", v)
 				}
 				cfg.Provider.Type = v
 			}
@@ -765,6 +770,13 @@ func providerSetCmd() *cobra.Command {
 			if v, _ := cmd.Flags().GetString("auth-env"); v != "" {
 				cfg.Provider.AuthEnv = v
 			}
+			// Enforce the copilot-native opt-in gate before persisting.
+			// Per rubber-duck #2: this is the first of three activation
+			// paths (set, auto-detect, config-set); all three must gate.
+			if cfg.Provider.Type == provider.CopilotNativeType && !store.CopilotNativeOptedIn() {
+				fmt.Fprint(cmd.OutOrStdout(), copilotNativeOptInPrompt())
+				return fmt.Errorf("copilot-native requires opt-in; run `tpatch config set provider.copilot_native_optin true`")
+			}
 			if err := s.SaveConfig(cfg); err != nil {
 				return err
 			}
@@ -774,17 +786,18 @@ func providerSetCmd() *cobra.Command {
 			// Show the AUP warning the first time a Copilot-flavoured config
 			// is selected (once per user, recorded in global config).
 			provCfg := provider.Config{
-				Type:    cfg.Provider.Type,
-				BaseURL: cfg.Provider.BaseURL,
-				Model:   cfg.Provider.Model,
-				AuthEnv: cfg.Provider.AuthEnv,
+				Type:      cfg.Provider.Type,
+				BaseURL:   cfg.Provider.BaseURL,
+				Model:     cfg.Provider.Model,
+				AuthEnv:   cfg.Provider.AuthEnv,
+				Initiator: cfg.Provider.Initiator,
 			}
 			maybeShowAUPWarning(cmd.OutOrStdout(), provCfg)
 			return nil
 		},
 	}
-	cmd.Flags().String("preset", "", "Preset: copilot | openai | openrouter | anthropic | ollama")
-	cmd.Flags().String("type", "", "Provider type: openai-compatible | anthropic")
+	cmd.Flags().String("preset", "", "Preset: copilot | copilot-native | openai | openrouter | anthropic | ollama")
+	cmd.Flags().String("type", "", "Provider type: openai-compatible | anthropic | copilot-native")
 	cmd.Flags().String("base-url", "", "Provider base URL")
 	cmd.Flags().String("model", "", "Default model")
 	cmd.Flags().String("auth-env", "", "Environment variable name for auth token")
@@ -798,11 +811,12 @@ func providerSetCmd() *cobra.Command {
 var providerPresets = map[string]struct {
 	Type, BaseURL, Model, AuthEnv string
 }{
-	"copilot":    {"openai-compatible", "http://localhost:4141", "claude-sonnet-4", "GITHUB_TOKEN"},
-	"openai":     {"openai-compatible", "https://api.openai.com", "gpt-4o", "OPENAI_API_KEY"},
-	"openrouter": {"openai-compatible", "https://openrouter.ai/api", "anthropic/claude-sonnet-4", "OPENROUTER_API_KEY"},
-	"anthropic":  {"anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "ANTHROPIC_API_KEY"},
-	"ollama":     {"openai-compatible", "http://localhost:11434", "llama3.2", ""},
+	"copilot":        {"openai-compatible", "http://localhost:4141", "claude-sonnet-4", "GITHUB_TOKEN"},
+	"copilot-native": {provider.CopilotNativeType, "", "claude-sonnet-4", ""},
+	"openai":         {"openai-compatible", "https://api.openai.com", "gpt-4o", "OPENAI_API_KEY"},
+	"openrouter":     {"openai-compatible", "https://openrouter.ai/api", "anthropic/claude-sonnet-4", "OPENROUTER_API_KEY"},
+	"anthropic":      {"anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "ANTHROPIC_API_KEY"},
+	"ollama":         {"openai-compatible", "http://localhost:11434", "llama3.2", ""},
 }
 
 // ─── config ──────────────────────────────────────────────────────────────────
@@ -842,6 +856,22 @@ func configSetCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
+
+			// Global-only keys bypass the repo store. Per rubber-duck
+			// review #3: opt-in state must persist across repos.
+			switch key {
+			case "provider.copilot_native_optin":
+				if strings.ToLower(value) != "true" {
+					return fmt.Errorf("opt-in must be set to `true`; see ADR-005")
+				}
+				if err := store.AcknowledgeCopilotNativeOptIn(); err != nil {
+					return err
+				}
+				fmt.Fprint(cmd.OutOrStdout(), copilotNativeAUPNotice())
+				fmt.Fprintf(cmd.OutOrStdout(), "\nOpt-in recorded in global config.\n")
+				return nil
+			}
+
 			s, err := openStoreFromCmd(cmd)
 			if err != nil {
 				return err
@@ -852,6 +882,10 @@ func configSetCmd() *cobra.Command {
 			}
 			switch key {
 			case "provider.type":
+				if value == provider.CopilotNativeType && !store.CopilotNativeOptedIn() {
+					fmt.Fprint(cmd.OutOrStdout(), copilotNativeOptInPrompt())
+					return fmt.Errorf("copilot-native requires opt-in; run `tpatch config set provider.copilot_native_optin true`")
+				}
 				cfg.Provider.Type = value
 			case "provider.base_url":
 				cfg.Provider.BaseURL = value
@@ -859,6 +893,11 @@ func configSetCmd() *cobra.Command {
 				cfg.Provider.Model = value
 			case "provider.auth_env":
 				cfg.Provider.AuthEnv = value
+			case "provider.initiator":
+				if value != "" && value != "user" && value != "agent" {
+					return fmt.Errorf("provider.initiator must be empty, \"user\", or \"agent\"")
+				}
+				cfg.Provider.Initiator = value
 			case "merge_strategy":
 				if value != "3way" && value != "rebase" {
 					return fmt.Errorf("invalid merge_strategy %q (valid: 3way, rebase)", value)
@@ -873,7 +912,7 @@ func configSetCmd() *cobra.Command {
 			case "test_command":
 				cfg.TestCommand = value
 			default:
-				return fmt.Errorf("unknown config key %q (valid: provider.type, provider.base_url, provider.model, provider.auth_env, merge_strategy, max_retries, test_command)", key)
+				return fmt.Errorf("unknown config key %q (valid: provider.type, provider.base_url, provider.model, provider.auth_env, provider.initiator, provider.copilot_native_optin, merge_strategy, max_retries, test_command)", key)
 			}
 			if err := s.SaveConfig(cfg); err != nil {
 				return err
@@ -947,10 +986,11 @@ func loadProviderFromStore(s *store.Store) (provider.Provider, provider.Config) 
 		return nil, provider.Config{}
 	}
 	provCfg := provider.Config{
-		Type:    cfg.Provider.Type,
-		BaseURL: cfg.Provider.BaseURL,
-		Model:   cfg.Provider.Model,
-		AuthEnv: cfg.Provider.AuthEnv,
+		Type:      cfg.Provider.Type,
+		BaseURL:   cfg.Provider.BaseURL,
+		Model:     cfg.Provider.Model,
+		AuthEnv:   cfg.Provider.AuthEnv,
+		Initiator: cfg.Provider.Initiator,
 	}
 	if !provCfg.Configured() {
 		return nil, provCfg

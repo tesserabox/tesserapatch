@@ -1,5 +1,7 @@
 package store
 
+import "strings"
+
 // FeatureState represents the lifecycle state of a tracked feature.
 type FeatureState string
 
@@ -80,18 +82,30 @@ type Config struct {
 	// global config (~/.config/tpatch/config.yaml). Empty means "never
 	// acknowledged"; non-empty suppresses the first-run warning.
 	CopilotAUPAckAt string `json:"copilot_aup_acknowledged_at,omitempty"`
+
+	// CopilotNativeOptIn records the user's opt-in for the native Copilot
+	// provider (type: copilot-native). Global-only. When false, commands
+	// that would activate copilot-native print the AUP and refuse.
+	CopilotNativeOptIn bool `json:"copilot_native_optin,omitempty"`
+	// CopilotNativeOptInAt is the ISO-8601 timestamp at opt-in.
+	CopilotNativeOptInAt string `json:"copilot_native_optin_at,omitempty"`
 }
 
 // ProviderConfig stores the LLM provider settings.
 type ProviderConfig struct {
-	Type    string `json:"type"`
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
-	AuthEnv string `json:"auth_env"` // env var name, NOT the secret
+	Type      string `json:"type"`
+	BaseURL   string `json:"base_url"`
+	Model     string `json:"model"`
+	AuthEnv   string `json:"auth_env"`            // env var name, NOT the secret
+	Initiator string `json:"initiator,omitempty"` // x-initiator header ("", "user", "agent") for copilot-native
 }
 
 // Configured returns true if the provider has enough info to attempt a connection.
+// copilot-native relies on the auth file for its base URL, so only Model is required.
 func (c ProviderConfig) Configured() bool {
+	if strings.EqualFold(strings.TrimSpace(c.Type), "copilot-native") {
+		return c.Model != ""
+	}
 	return c.BaseURL != "" && c.Model != ""
 }
 

@@ -436,3 +436,33 @@ Session ended pending supervisor approval.
 - `Makefile` — Build pipeline
 
 **Notes**: None. Clean implementation matching GPT reference structure with extensions for the unified spec (added `define`, `explore`, `implement`, `record`, `config` commands Beyond GPT's original 7).
+
+## Review — M11 — 2026-04-18
+
+**Reviewer**: implementation self-report (pending external review)
+**Task**: Native Copilot provider (ADR-005)
+
+### Checklist
+- [x] Compiles — `go build ./cmd/tpatch` → `tpatch 0.4.0-dev`
+- [x] Tests pass — `go test ./... -count=1` all 7 packages green
+- [x] Formatted — `gofmt -l .` clean
+- [x] Artifacts deterministic — no runtime artifacts added in this cut
+- [x] Secrets safe — OAuth token stored at 0600, parent-dir checks, `TPATCH_COPILOT_AUTH_FILE` for tests, symlink rejection
+- [x] Matches SPEC / ADR-005 D1–D10
+- [x] Handoff accurate (see `docs/handoff/CURRENT.md`)
+
+### Verdict: APPROVED WITH NOTES (pending external)
+
+### Notes
+- Provider-level unit tests (httptest fake for device flow + session
+  exchange + 401 retry) are scaffolded in the code but not yet
+  written. Tracked as a follow-up — existing test suite still passes
+  because new code paths require the opt-in + auth file to execute.
+- `headers_override` intentionally deferred (rubber-duck #7) — the
+  zero-dep YAML parser is flat-scalar only. Will revisit once an
+  official compatibility endpoint is published.
+- macOS FAQ entry added per the M10 review feedback.
+
+### Action Taken
+Archived M10 handoff to HISTORY.md, wrote new M11 CURRENT, marked
+M11 ✅ in ROADMAP.

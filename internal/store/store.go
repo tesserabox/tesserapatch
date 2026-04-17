@@ -303,13 +303,17 @@ func (s *Store) SaveConfig(cfg Config) error {
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
+	initiatorLine := ""
+	if cfg.Provider.Initiator != "" {
+		initiatorLine = fmt.Sprintf("  initiator: %s\n", yamlQuote(cfg.Provider.Initiator))
+	}
 	content := fmt.Sprintf(`# Tessera Patch configuration
 provider:
   type: %s
   base_url: %s
   model: %s
   auth_env: %s
-
+%s
 # Merge strategy for applying patches: "3way" (default) or "rebase"
 merge_strategy: %s
 
@@ -319,7 +323,8 @@ max_retries: %d
 # Shell command run by `+"`tpatch test <slug>`"+` (e.g. "go test ./...", "bun test")
 test_command: %s
 `, yamlQuote(cfg.Provider.Type), yamlQuote(cfg.Provider.BaseURL),
-		yamlQuote(cfg.Provider.Model), yamlQuote(cfg.Provider.AuthEnv), mergeStrat,
+		yamlQuote(cfg.Provider.Model), yamlQuote(cfg.Provider.AuthEnv),
+		initiatorLine, mergeStrat,
 		maxRetries, yamlQuote(cfg.TestCommand))
 	return writeFile(s.configPath(), content)
 }
@@ -461,6 +466,7 @@ func parseYAMLConfig(content string) Config {
 	cfg.Provider.BaseURL = extractYAMLValue(content, "base_url")
 	cfg.Provider.Model = extractYAMLValue(content, "model")
 	cfg.Provider.AuthEnv = extractYAMLValue(content, "auth_env")
+	cfg.Provider.Initiator = extractYAMLValue(content, "initiator")
 	cfg.MergeStrategy = extractYAMLValue(content, "merge_strategy")
 	if cfg.MergeStrategy == "" {
 		cfg.MergeStrategy = "3way"
@@ -474,6 +480,10 @@ func parseYAMLConfig(content string) Config {
 		cfg.MaxRetries = 2
 	}
 	cfg.TestCommand = extractYAMLValue(content, "test_command")
+	if v := extractYAMLValue(content, "copilot_native_optin"); v == "true" {
+		cfg.CopilotNativeOptIn = true
+	}
+	cfg.CopilotNativeOptInAt = extractYAMLValue(content, "copilot_native_optin_at")
 	return cfg
 }
 

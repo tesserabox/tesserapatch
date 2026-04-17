@@ -131,6 +131,9 @@ func mergeConfig(global, repo Config) Config {
 	if repo.Provider.AuthEnv != "" {
 		out.Provider.AuthEnv = repo.Provider.AuthEnv
 	}
+	if repo.Provider.Initiator != "" {
+		out.Provider.Initiator = repo.Provider.Initiator
+	}
 	if repo.MergeStrategy != "" && repo.MergeStrategy != "3way" {
 		out.MergeStrategy = repo.MergeStrategy
 	} else if out.MergeStrategy == "" {
@@ -149,7 +152,8 @@ func mergeConfig(global, repo Config) Config {
 }
 
 // renderGlobalYAML serialises the global config. Uses the same top-level
-// keys as the repo config plus copilot_aup_acknowledged_at.
+// keys as the repo config plus copilot_aup_acknowledged_at and the
+// copilot-native opt-in fields.
 func renderGlobalYAML(cfg Config) string {
 	mergeStrat := cfg.MergeStrategy
 	if mergeStrat == "" {
@@ -158,6 +162,14 @@ func renderGlobalYAML(cfg Config) string {
 	maxRetries := cfg.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
+	}
+	optIn := "false"
+	if cfg.CopilotNativeOptIn {
+		optIn = "true"
+	}
+	initiatorLine := ""
+	if cfg.Provider.Initiator != "" {
+		initiatorLine = fmt.Sprintf("  initiator: %s\n", yamlQuote(cfg.Provider.Initiator))
 	}
 	return fmt.Sprintf(`# Tessera Patch — global configuration
 # Location: $XDG_CONFIG_HOME/tpatch/config.yaml (or ~/.config/tpatch/config.yaml)
@@ -168,7 +180,7 @@ provider:
   base_url: %s
   model: %s
   auth_env: %s
-
+%s
 merge_strategy: %s
 max_retries: %d
 test_command: %s
@@ -176,10 +188,43 @@ test_command: %s
 # Timestamp the user acknowledged the Copilot AUP warning (ISO-8601).
 # Managed by tpatch; leave empty to re-trigger the first-run warning.
 copilot_aup_acknowledged_at: %s
+
+# Opt-in for the native Copilot provider (type: copilot-native). See ADR-005.
+# Set via `+"`tpatch config set provider.copilot_native_optin true`"+`.
+copilot_native_optin: %s
+copilot_native_optin_at: %s
 `,
 		yamlQuote(cfg.Provider.Type), yamlQuote(cfg.Provider.BaseURL),
 		yamlQuote(cfg.Provider.Model), yamlQuote(cfg.Provider.AuthEnv),
+		initiatorLine,
 		mergeStrat, maxRetries, yamlQuote(cfg.TestCommand),
 		yamlQuote(cfg.CopilotAUPAckAt),
+		optIn, yamlQuote(cfg.CopilotNativeOptInAt),
 	)
+}
+
+// AcknowledgeCopilotNativeOptIn records the user's acceptance of the
+// native Copilot provider AUP in the global config. Idempotent — if
+// already acknowledged, does nothing.
+func AcknowledgeCopilotNativeOptIn() error {
+	cfg, err := LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.CopilotNativeOptIn {
+		return nil
+	}
+	cfg.CopilotNativeOptIn = true
+	cfg.CopilotNativeOptInAt = nowStamp()
+	return SaveGlobalConfig(cfg)
+}
+
+// CopilotNativeOptedIn reports whether the user has opted into the
+// native provider. Reads from the global config.
+func CopilotNativeOptedIn() bool {
+	cfg, err := LoadGlobalConfig()
+	if err != nil {
+		return false
+	}
+	return cfg.CopilotNativeOptIn
 }

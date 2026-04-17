@@ -151,6 +151,8 @@ func NewFromConfig(cfg Config) Provider {
 	switch strings.ToLower(strings.TrimSpace(cfg.Type)) {
 	case "anthropic":
 		return NewAnthropic()
+	case CopilotNativeType:
+		return NewCopilotNative(cfg)
 	default:
 		return New()
 	}

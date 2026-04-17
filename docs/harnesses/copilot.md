@@ -132,3 +132,31 @@ Allow-listing `tpatch *` keeps the loop non-interactive while still blocking arb
 | `tpatch next` returns `phase: analyze` on every call | Analyze step failing silently | Inspect `.tpatch/features/<slug>/artifacts/raw-analyze-response-*.txt` |
 | Shell tool prompts for approval every call | Allow list not set | Add `tpatch *` to the allow list as shown above |
 | Provider auth errors | Same env var shared by copilot-cli and tpatch got rotated | `tpatch provider check` to verify, re-export the new token |
+
+## Native path (experimental, opt-in — see ADR-005)
+
+As of v0.4.0-dev, tpatch can talk directly to `api.githubcopilot.com`
+using the same editor-style OAuth flow that VS Code's Copilot
+extension uses, without running the `copilot-api` proxy. This is
+useful when you want a single binary with no sidecar.
+
+```sh
+tpatch config set provider.copilot_native_optin true
+tpatch provider copilot-login                  # runs the device-code flow
+tpatch provider set --preset copilot-native --model claude-sonnet-4
+tpatch provider check
+```
+
+Session tokens live for ~25 minutes and are refreshed automatically
+before each call. The long-lived OAuth token is written to
+`~/.local/share/tpatch/copilot-auth.json` (Linux) or
+`~/Library/Application Support/tpatch/copilot-auth.json` (macOS) with
+`0600` permissions. Run `tpatch provider copilot-logout` to delete it.
+
+This path is **not endorsed by GitHub**; you are responsible for
+compliance with the Acceptable Use Policies. If GitHub ships an
+official compatibility endpoint, we will switch to it.
+
+For most users, the managed `copilot-api` proxy (preset: `copilot`) is
+still the recommended setup because it has a broader install base and
+receives faster upstream patches.

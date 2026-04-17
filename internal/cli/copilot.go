@@ -104,9 +104,10 @@ func providerConfigFromStore(s *store.Store) provider.Config {
 		return provider.Config{}
 	}
 	return provider.Config{
-		Type:    cfg.Provider.Type,
-		BaseURL: cfg.Provider.BaseURL,
-		Model:   cfg.Provider.Model,
-		AuthEnv: cfg.Provider.AuthEnv,
+		Type:      cfg.Provider.Type,
+		BaseURL:   cfg.Provider.BaseURL,
+		Model:     cfg.Provider.Model,
+		AuthEnv:   cfg.Provider.AuthEnv,
+		Initiator: cfg.Provider.Initiator,
 	}
 }

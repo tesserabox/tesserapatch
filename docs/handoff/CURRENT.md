@@ -1,65 +1,121 @@
 # Current Handoff
 
 ## Active Task
-- **Task ID**: M10 — Managed Copilot proxy UX (ADR-004)
-- **Milestone**: M10 delivered
-- **Description**: Honest UX for the reverse-engineered `copilot-api` proxy — global config, reachability probe, first-run AUP warning, install pointers, CI release automation.
+- **Task ID**: M11 — Native Copilot provider (ADR-005)
+- **Milestone**: M11 delivered
+- **Description**: First-party Go provider speaking directly to `api.githubcopilot.com`. Mirrors the copilot-api/litellm pattern: device-code OAuth → session-token exchange → editor headers.
 - **Status**: Implemented; awaiting supervisor review.
-- **Assigned**: 2026-04-17
+- **Assigned**: 2026-04-18
 
 ## Session Summary
 
-1. **CI release automation** — added a `release` job to `.github/workflows/ci.yml` that triggers on `v*` tag pushes, creates a GitHub Release via `softprops/action-gh-release@v2`, auto-generates release notes, and marks tags containing `-` as prereleases. Uses the default `GITHUB_TOKEN` with `contents: write`. Cost: free.
-2. **Global config** — new `internal/store/global.go` adds `GlobalConfigPath()`, `LoadGlobalConfig`, `SaveGlobalConfig`, `(s *Store).LoadMergedConfig`, `AcknowledgeCopilotAUP`, `CopilotAUPAcknowledged`, `mergeConfig`, `renderGlobalYAML`. Honors `XDG_CONFIG_HOME`, falls back to `os.UserConfigDir()` (macOS caveat documented in the harness doc). Chmod 0600 on write.
-3. **Config precedence** — repo `.tpatch/config.yaml` overrides the global config field-by-field; zero values do **not** clear globals (must set the field explicitly). AUP ack is global-only.
-4. **Types** — `Config.CopilotAUPAckAt string` added to `internal/store/types.go`.
-5. **Reachability probe** — new `internal/provider/probe.go` with `Reachable(ctx, cfg)` (2s timeout), `IsLocalEndpoint(cfg)`, `IsCopilotProxyEndpoint(cfg)` helpers. Probes via existing `Check()`.
-6. **CLI wiring** — new `internal/cli/copilot.go` with `copilotInstallHint`, `copilotAUPWarning`, `maybeShowAUPWarning`, `ensureProviderReachable`, `warnIfUnreachable`, `providerConfigFromStore`. Wired into `init` (warn-continue + AUP) and `providerSetCmd` + `autoDetectProvider` (AUP on first Copilot selection).
-7. **Workflow hard-fail** — `loadAndProbeProvider(ctx, s)` replaces `loadProviderFromStore` in analyze/define/explore/implement/cycle. Probes once per process (cached per base URL). Local-endpoint-only; opt-out via `TPATCH_NO_PROBE=1`. Non-local endpoints skip the probe to avoid penalising custom remote configs.
-8. **Execute now surfaces errors** — `Execute()` prints `error: %v` to stderr before returning exit code 1 so probe failures are visible. Preserves existing `SilenceErrors: true` cobra behaviour for graceful formatting.
-9. **Harness doc refresh** — `docs/harnesses/copilot.md` now documents the install path, OS-dependent global config path (macOS caveat), warn-vs-fail behaviour, and links to ADR-004/005.
-10. **Tests** — 6 new tests in `internal/store/global_test.go` (roundtrip, missing file, ack idempotency, precedence, merge-no-clear, save creates dir) and 5 in `internal/provider/probe_test.go` (httptest OK, TEST-NET-1 timeout, not-configured, URL matcher, cancelled ctx). All 7 packages pass.
+1. **Auth store** (`internal/provider/copilot_auth.go`) — schema
+   `{version, oauth, session}`, atomic write at `$XDG_DATA_HOME/tpatch/copilot-auth.json`
+   with 0600 perms, rejects symlinks + world/group-writable parent dirs, tightens
+   file perms on load, `TPATCH_COPILOT_AUTH_FILE` env override for tests,
+   `authStoreMu` serialises writes + refreshes.
+2. **Device-code flow** (`internal/provider/copilot_login.go`) — `RequestDeviceCode`,
+   `PollAccessToken` (honours `authorization_pending`, permanent `slow_down` bump,
+   `expired_token`, `access_denied`, local deadline + ctx cancel, always sends
+   `Accept: application/json`), `ExchangeSessionToken` (+ `…Locked` variant used
+   by the provider's retry-on-401 path). Client ID `Iv1.b507a08c87ecfe98`
+   matches copilot-api.
+3. **Editor headers** (`internal/provider/copilot_headers.go`) — version
+   constants tracking copilot-api 0.26.7, `x-request-id` uuid, `TODO(adr-005)`
+   to refresh when upstream bumps.
+4. **Provider impl** (`internal/provider/copilot_native.go`) — `CopilotNative`
+   satisfies `Provider`. `Check` never initiates device flow (returns
+   `errCopilotUnauthorized` if no auth file). `Generate` proactively refreshes
+   the session 60s before expiry, retries once on 401 with a forced refresh,
+   then fails. Routes via `auth.Session.Endpoints["api"]` verbatim (D5).
+5. **Registry** — `provider.NewFromConfig` dispatches
+   `CopilotNativeType = "copilot-native"`. `Config.Configured()` relaxed for
+   copilot-native so `Model` alone is enough (`BaseURL` comes from the auth
+   file). New `Config.Initiator` field plumbed through `store.ProviderConfig`,
+   the YAML parser, `SaveConfig`, and `renderGlobalYAML`.
+6. **Opt-in gate** — `store.AcknowledgeCopilotNativeOptIn`,
+   `store.CopilotNativeOptedIn`, plus `CopilotNativeOptIn` + `…At` fields
+   written to **global config only** (same class as `CopilotAUPAckAt`) so they
+   don't leak via repo clones. Enforced in `providerSetCmd`, `config set`
+   (`provider.type=copilot-native`), and implicitly in auto-detect (which never
+   lists copilot-native as a candidate).
+7. **CLI** (`internal/cli/copilot_native.go`) — `provider copilot-login`
+   (enterprise prompt, device flow, AUP notice), `provider copilot-logout`
+   (deletes auth file). Re-uses AUP language from M10.
+8. **Config set** — `config set provider.copilot_native_optin true` routes
+   to `SaveGlobalConfig` (rubber-duck #3); `config set provider.initiator`
+   validates `""|user|agent`.
+9. **Preset** — `--preset copilot-native` in `providerPresets` (empty
+   BaseURL, default model `claude-sonnet-4`, empty AuthEnv).
+10. **Version bump** — `0.4.0-dev`.
+11. **Docs** — new `docs/faq.md` (macOS `~/Library/Application Support`
+    caveat + `XDG_CONFIG_HOME` override + auth-file locations); harness
+    doc `docs/harnesses/copilot.md` gains "Native path (experimental,
+    opt-in)" section; ROADMAP M11 marked ✅.
 
 ## Files Created
-- `.github/workflows/ci.yml` — amended (release job)
-- `internal/store/global.go`
-- `internal/store/global_test.go`
-- `internal/provider/probe.go`
-- `internal/provider/probe_test.go`
-- `internal/cli/copilot.go`
+- `internal/provider/copilot_auth.go`
+- `internal/provider/copilot_login.go`
+- `internal/provider/copilot_headers.go`
+- `internal/provider/copilot_native.go`
+- `internal/cli/copilot_native.go`
+- `docs/faq.md`
 
-## Files Changed
-- `internal/cli/cobra.go` — `loadAndProbeProvider`, `Execute` prints errors, AUP wiring in `init` / `providerSetCmd` / `autoDetectProvider`, `sync` import.
-- `internal/store/types.go` — `CopilotAUPAckAt` field.
-- `docs/harnesses/copilot.md` — M10 section.
+## Files Modified
+- `internal/provider/provider.go` — `Config.Initiator`, relaxed `Configured()`
+- `internal/provider/anthropic.go` — `NewFromConfig` dispatches copilot-native
+- `internal/store/types.go` — `CopilotNativeOptIn` + `…At`, `ProviderConfig.Initiator`, relaxed `ProviderConfig.Configured()`
+- `internal/store/store.go` — YAML parse/emit for new fields
+- `internal/store/global.go` — global opt-in render + merge + helpers
+- `internal/cli/cobra.go` — preset, type flag, opt-in gate, config-set routing, version bump
+- `internal/cli/copilot.go` — pipes `Initiator` into `provider.Config`
+- `docs/harnesses/copilot.md` — native path section
+- `docs/ROADMAP.md` — M11 marked ✅
 
 ## Test Results
-- `gofmt -w .` clean
-- `go vet ./...` clean
-- `go test ./... -count=1` — 7/7 packages pass
-- `go build ./cmd/tpatch` OK
-- Smoke: `init` + `provider set --preset copilot` prints AUP warning exactly once; second run is quiet; `analyze` against a dead localhost port hard-fails with an install hint; against a live copilot-api proxy falls through to the workflow.
 
-## Key Behaviours
-
-- **Warn vs fail**: `init` and `provider set` are warn-continue (a user may be bootstrapping before starting the proxy). Workflow commands that actually call the LLM (`analyze|define|explore|implement|cycle`) hard-fail when the local endpoint is unreachable.
-- **Probe scope**: only runs for local endpoints (`localhost`, `127.0.0.1`, `[::1]`). Remote endpoints are trusted.
-- **AUP once**: the AUP warning fires only when the new config actually points at the copilot-api proxy (`openai-compatible` + port 4141) and the user has not acknowledged before.
-- **TODO**: `copilotInstallHint` carries an inline `TODO(adr-004)` comment to revisit the tesserabox fork recommendation if its divergent fixes become blocking.
-
-## Blockers
-- None for M10.
-- M11 still soft-blocked on the two open questions in ADR-005 (editor-headers legal/ToS, official endpoint roadmap). User direction: proceed with editor headers, monitor; so these are effectively closed as "accept risk".
+```
+$ go test ./... -count=1
+ok  github.com/tesserabox/tesserapatch/assets
+ok  github.com/tesserabox/tesserapatch/internal/cli
+ok  github.com/tesserabox/tesserapatch/internal/provider
+ok  github.com/tesserabox/tesserapatch/internal/safety
+ok  github.com/tesserabox/tesserapatch/internal/store
+ok  github.com/tesserabox/tesserapatch/internal/workflow
+$ go build ./cmd/tpatch
+# binary reports 0.4.0-dev
+```
 
 ## Next Steps
-1. Supervisor review of M10 implementation.
-2. Commit as `feat(m10): managed copilot-api proxy UX (ADR-004)` and push.
-3. Consider tagging `v0.3.1` once review lands — CI will produce the GitHub Release automatically.
-4. Start M11 implementation per ADR-005 (native Copilot provider with session-token exchange) once M10 is merged.
+1. Supervisor review per `AGENTS.md` cadence → approve → tag `v0.4.0`
+   so the CI release job publishes notes.
+2. Live smoke test against a real GitHub account with Copilot entitlement:
+   - `tpatch config set provider.copilot_native_optin true`
+   - `tpatch provider copilot-login`
+   - `tpatch provider set --preset copilot-native`
+   - `tpatch provider check`
+   - full `tpatch cycle` of a toy feature.
+3. Follow-up: add provider-level unit tests with an httptest fake for
+   the device flow + session exchange + 401 retry (scaffolded but not
+   included in this cut to keep the diff surgical).
+
+## Blockers
+None. Editor-header policy is a known unknown per ADR-005 OQ1; we ship
+with editor headers until GitHub publishes an official compatibility
+endpoint.
 
 ## Context for Next Agent
-- Global config on macOS defaults to `~/Library/Application Support/tpatch/config.yaml` unless `XDG_CONFIG_HOME` is set. Every test that touches global state sets `XDG_CONFIG_HOME` to a tempdir; follow this pattern.
-- `TPATCH_NO_PROBE=1` disables the workflow hard-fail probe (useful for offline demos or CI steps that only read store state). Add it to future tests that should not hit the network.
-- The probe cache is a process-level `map[string]error` guarded by a mutex — fine for the CLI's one-shot lifecycle but intentionally not time-bound, so long-running processes would need to invalidate it. Not a concern today.
-- `Execute()` now prints errors. Tests that exercise `rootCmd.Execute()` directly still use the cobra `SetErr` buffer; only the top-level wrapper prints to stderr.
-- The AUP warning text lives in `internal/cli/copilot.go::copilotAUPWarning`. Tweak there, not in harness docs.
+- `CopilotAuthFilePath()` returns `(string, error)` — don't call it as a
+  single-value expression.
+- `ExchangeSessionToken(ctx, opts, auth)` **mutates `auth` in place** and
+  returns only `error`. That's intentional: the provider's retry-on-401
+  path needs to refresh the in-memory struct without re-reading the file
+  before writing.
+- `CopilotSessionBlock.Endpoints["api"]` is the routing root. Treat it as
+  opaque — don't parse or reconstruct it.
+- `authStoreMu` guards **both** the file and `exchangeSessionTokenLocked`;
+  always call `ExchangeSessionToken` (the public wrapper) unless you
+  already hold the mutex.
+- macOS + `os.UserConfigDir()` resolves to `~/Library/Application Support/tpatch/`.
+  Documented in `docs/faq.md`; users who want XDG layout set
+  `XDG_CONFIG_HOME`.

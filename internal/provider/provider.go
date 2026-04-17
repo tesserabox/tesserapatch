@@ -33,10 +33,19 @@ type Config struct {
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
 	AuthEnv string `json:"auth_env"`
+
+	// Initiator is the optional x-initiator header value for the native
+	// Copilot provider ("", "user", or "agent"). Unused for other types.
+	Initiator string `json:"initiator,omitempty"`
 }
 
 // Configured returns true if the provider has enough info to connect.
+// For copilot-native the BaseURL check is relaxed — the real base URL
+// comes from the auth file's session.endpoints map, not from config.
 func (c Config) Configured() bool {
+	if strings.EqualFold(strings.TrimSpace(c.Type), CopilotNativeType) {
+		return c.Model != ""
+	}
 	return c.BaseURL != "" && c.Model != ""
 }
 
