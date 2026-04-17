@@ -19,6 +19,9 @@ var requiredCommands = []string{
 	"tpatch reconcile",
 	"tpatch provider",
 	"tpatch config",
+	"tpatch cycle",
+	"tpatch test",
+	"tpatch next",
 }
 
 // Skill format files that must mention all CLI commands.

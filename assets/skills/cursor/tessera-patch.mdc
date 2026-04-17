@@ -24,6 +24,9 @@ Follow the 7-phase lifecycle: analyse → define → explore → implement → t
 - `tpatch reconcile` — Reconcile with upstream
 - `tpatch provider check` — Validate provider
 - `tpatch config show|set` — Manage configuration
+- `tpatch cycle <slug>` — Full lifecycle in one command (add `--interactive` for prompts)
+- `tpatch test <slug>` — Run the configured `test_command` and record the result
+- `tpatch next <slug>` — Emit the next action (use `--format harness-json` for structured output)
 
 ## Data Location
 

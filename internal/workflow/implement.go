@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/tesserabox/tpatch/internal/provider"
-	"github.com/tesserabox/tpatch/internal/store"
+	"github.com/tesserabox/tesserapatch/internal/provider"
+	"github.com/tesserabox/tesserapatch/internal/store"
 )
 
 // ApplyRecipe is the deterministic operation format for applying changes.
@@ -50,11 +50,19 @@ Output ONLY valid JSON: {"feature": "<slug>", "operations": [...]}`
 		userPrompt := fmt.Sprintf("# Feature: %s\n\n## Request\n%s\n\n## Spec\n%s\n\n## Exploration\n%s",
 			slug, request, spec, exploration)
 
-		response, err := prov.Generate(ctx, cfg, provider.GenerateRequest{
+		storeCfg, _ := s.LoadConfig()
+		var tmp ApplyRecipe
+		response, err := GenerateWithRetry(ctx, prov, cfg, provider.GenerateRequest{
 			SystemPrompt: systemPrompt,
 			UserPrompt:   userPrompt,
 			MaxTokens:    8192,
 			Temperature:  0.1,
+		}, RetryOptions{
+			MaxRetries: storeCfg.MaxRetries,
+			Validate:   JSONObjectValidator(&tmp),
+			LogPrefix:  "implement",
+			Slug:       slug,
+			Store:      s,
 		})
 		if err != nil {
 			recipeContent = heuristicRecipe(slug)

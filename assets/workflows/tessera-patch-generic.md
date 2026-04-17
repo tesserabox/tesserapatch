@@ -42,6 +42,9 @@ tpatch status
 - `tpatch reconcile` — Reconcile with upstream
 - `tpatch provider check` — Validate provider
 - `tpatch config show|set` — Manage config
+- `tpatch cycle <slug>` — Full lifecycle in one command (add `--interactive` for prompts)
+- `tpatch test <slug>` — Run the configured `test_command` and record the result
+- `tpatch next <slug>` — Emit the next action (use `--format harness-json` for structured output)
 
 ## Reconciliation
 

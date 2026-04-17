@@ -7,8 +7,10 @@ Tessera Patch is a local CLI that lets you customize open-source projects by des
 ## Install
 
 ```bash
-go install github.com/tesserabox/tpatch/cmd/tpatch@latest
+go install github.com/tesserabox/tesserapatch/cmd/tpatch@latest
 ```
+
+This installs the `tpatch` binary into `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`.
 
 Or build from source:
 

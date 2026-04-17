@@ -186,8 +186,26 @@ Each entry in `docs/supervisor/LOG.md`:
 
 ## Context Preservation Rules
 
-1. **Before any session ends**: Update `docs/handoff/CURRENT.md` comprehensively
-2. **Before context gets low**: Write everything you know to the handoff — assume the next agent has zero context beyond what's in the files
-3. **After each task completion**: Archive to HISTORY.md immediately
-4. **After each review**: Log to supervisor/LOG.md immediately
-5. **Never leave tracking stale**: If you did work, update tracking before stopping
+**These rules are enforced, not aspirational. A task is not complete until the tracking documents reflect its state.**
+
+1. **Update `docs/handoff/CURRENT.md` at every phase transition** — not just at session end. Phases include: starting a new task, finishing a unit of work, switching from implementation to review, discovering a blocker.
+2. **Before context gets low**: Write everything you know to the handoff — assume the next agent has zero context beyond what's in the files.
+3. **After each task completion**: Archive the old CURRENT.md entry to `docs/handoff/HISTORY.md` immediately. Do not batch.
+4. **After each review**: Append the verdict to `docs/supervisor/LOG.md` immediately. Do not batch.
+5. **After every milestone transition**: Update the milestone box in `docs/ROADMAP.md` (✅ / ⬜ / 🚧). If you touch a milestone, you touch the roadmap.
+6. **ADR on every architecture decision**: When you evaluate alternatives and pick one, write an ADR in `docs/adrs/`. "Decision by agent consensus" is not a valid answer — future agents need the reasoning.
+7. **Plan.md is session-local, tracking docs are repo-global**: Use `plan.md` (in `~/.copilot/session-state/...`) for scratch planning. The moment a decision is made, propagate it into `CURRENT.md`, `ROADMAP.md`, or an ADR — do not leave load-bearing context in session state.
+8. **Never leave tracking stale**: If you did work, update tracking *before* stopping. If you stopped because of a blocker, update tracking with the blocker *before* handing off.
+
+### Cadence cheatsheet
+
+| Trigger | Update |
+|---------|--------|
+| Started a new task | `CURRENT.md` Active Task block |
+| Finished analyze/define/explore/implement | `CURRENT.md` Session Summary + Files Changed |
+| Ran tests (pass or fail) | `CURRENT.md` Test Results |
+| Hit a blocker | `CURRENT.md` Blockers + `LOG.md` if it affects review |
+| Made an architecture choice | New `ADR-00N-<topic>.md` |
+| Reviewer wrote a verdict | `LOG.md` entry + handoff transition |
+| Milestone done | `ROADMAP.md` status flip + milestone file closed |
+| Task done | `CURRENT.md` → `HISTORY.md` archive + new `CURRENT.md` for next task |

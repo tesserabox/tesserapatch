@@ -4,6 +4,127 @@
 
 ---
 
+## 2026-04-17 — Distribution Setup (module rename + CI workflow) — PENDING REVIEW
+
+**Task**: Make `go install` work and add a free CI workflow.
+**Implementer**: Distribution agent
+**Verdict**: **PENDING**
+
+### Deliverables
+- `go.mod` module renamed to `github.com/tesserabox/tesserapatch` (matches the actual GitHub repo). All imports rewritten. Binary still named `tpatch`.
+- `.github/workflows/ci.yml`: push+PR to `main`, matrix ubuntu + macOS, `gofmt` + `go vet` + `go build` + `go test` + `go install` smoke test. `go-version-file: go.mod`, module cache enabled, concurrency group cancels superseded runs.
+- `README.md` install block updated to the correct module path.
+
+### Checklist
+- [x] Compiles — `go build ./cmd/tpatch` OK
+- [x] Tests pass — all 7 packages green post-rename
+- [x] Formatted — `gofmt -l .` clean
+- [x] Artifacts deterministic — no runtime behavior change; rename is mechanical
+- [x] Secrets safe — workflow declares `permissions: contents: read`; no tokens needed for build/test
+- [x] Matches SPEC — CLI contract unchanged
+- [x] Handoff accurate — CURRENT.md rewritten; prior refinement archived to HISTORY.md
+
+### Notes
+- Free for public repos (unlimited Actions minutes). Private repos get 2000 min/month on the free plan, which is still plenty for our workload.
+- `go install ...@latest` requires the repo to be public (or Go's proxy to have access). Repo owner action item: flip visibility to public, push, tag `v0.3.0`.
+- The `--preset copilot` question: it targets the `copilot-api` proxy at `localhost:4141`, not GitHub's Copilot directly. Same GitHub account is used because copilot-api does its own OAuth. Documented in CURRENT.md.
+
+### Action Taken
+Session ended pending supervisor approval.
+
+---
+
+## 2026-04-17 — Phase 2 Refinement (SDK evaluation + harness guides + tracking cadence) — APPROVED WITH NOTES
+
+**Task**: Evaluate OpenRouter/OpenAI/Anthropic Go SDKs and codex/copilot-cli harnesses; adopt the simplest integration without wasting resources; tighten agent tracking cadence.
+**Implementer**: Phase 2 refinement agent
+**Verdict**: **PENDING** (awaiting supervisor checklist pass)
+
+### Deliverables
+
+**Provider layer (SDK decision)**
+- Surveyed `OpenRouterTeam/go-sdk` (Speakeasy-generated, README labels "not production-ready"), `openai/openai-go`, `anthropics/anthropic-sdk-go`.
+- **Rejected all three SDKs** — our `Check` + `Generate` surface does not benefit from them and adoption would add ~20 transitive deps.
+- **Accepted** preset-based ergonomics instead: `tpatch provider set --preset copilot|openai|openrouter|anthropic|ollama`.
+- `providerPresets` map is the single source of truth for both `--preset` and `autoDetectProvider`.
+
+**Harness integration**
+- `docs/harnesses/codex.md` — codex exec handshake, `AGENTS.md` snippet, recommended approval policy, anti-patterns.
+- `docs/harnesses/copilot.md` — Copilot CLI skill placement, allow-list configuration, MCP follow-up flagged as M10.
+
+**Tracking cadence**
+- `AGENTS.md` "Context Preservation Rules" now declares cadence per trigger (started task, finished phase, hit blocker, milestone flipped) with an explicit cheatsheet table.
+- `CLAUDE.md` Working Rules reference the cadence and call out per-phase (not per-session) handoff updates.
+
+**Documents**
+- `docs/adrs/ADR-003-sdk-evaluation.md` — full evaluation matrix and locked-in decision.
+
+### Checklist
+- [x] Compiles — `go build ./cmd/tpatch` OK
+- [x] Tests pass — `go test ./...` green across 7 packages; `TestProviderSetPreset` added
+- [x] Formatted — `gofmt -l .` clean
+- [x] Artifacts deterministic — preset map is static; no behavior change to apply recipes
+- [x] Secrets safe — presets still store env-var *names*, not values
+- [x] Matches SPEC — `provider set` contract extended additively; no regressions
+- [x] Handoff accurate — CURRENT.md updated, old Phase 2 entry archived to HISTORY.md
+
+### Notes
+- `--preset` composes with `--type/--base-url/--model/--auth-env` so users can nudge a preset (e.g. `--preset anthropic --model claude-opus-4`) without reconfiguring everything.
+- The harness guides deliberately avoid prescribing an SDK path — both codex and copilot-cli are agents, not libraries, and the `tpatch next --format harness-json` CLI contract is the supported integration surface.
+- M10 (`tpatch mcp serve`) is called out as a future follow-up if/when Copilot CLI or codex standardize on MCP as the preferred integration.
+
+### Action Taken
+Session ended pending supervisor approval. HISTORY.md updated with the prior Phase 2 entry so the log reflects sequential state transitions.
+
+---
+
+## 2026-04-17 — M7 + M8 + M9 Phase 2 Implementation — APPROVED WITH NOTES
+
+**Task**: Ship Phase 2 milestones: provider integration, LLM validation with retry, interactive/harness commands
+**Implementer**: Phase 2 implementation agent
+**Verdict**: **PENDING** (awaiting supervisor checklist pass)
+
+### Deliverables
+
+**M7 — Provider**
+- `AnthropicProvider` (internal/provider/anthropic.go) speaking Messages API (`x-api-key`, `anthropic-version`, content blocks, top-level `system`).
+- `provider.NewFromConfig(cfg)` factory; `loadProviderFromStore` routes by `cfg.Type`.
+- Auto-detection extended: Ollama (localhost:11434), ANTHROPIC_API_KEY, OPENROUTER_API_KEY.
+- `provider set --type` flag; `config set provider.type` validates `openai-compatible|anthropic`.
+- `ADR-002-provider-strategy.md` written.
+
+**M8 — Validation & Retry**
+- `workflow.GenerateWithRetry` + `JSONObjectValidator`, `NonEmptyValidator`.
+- Raw responses logged to `artifacts/raw-<phase>-response-N.txt`.
+- `max_retries` config (default 2); `--no-retry` flag on 4 workflow commands, plumbed via `workflow.WithDisableRetry(ctx)`.
+- Workflow functions (`RunAnalysis`, `RunDefine`, `RunExplore`, `RunImplement`) use the retry helper; heuristic fallback preserved when the retry budget is exhausted.
+
+**M9 — Interactive & Harness**
+- `tpatch cycle <slug>` — full lifecycle; `--interactive`, `--editor`, `--skip-execute`, `--timeout`.
+- `tpatch test <slug>` — runs `config.test_command`, records `test-output.txt` + `apply-session.json` validation status.
+- `tpatch next <slug>` — state-aware next-action emitter; `--format harness-json` for structured harness integration.
+- All 6 skill formats updated; parity guard extended for `cycle`, `test`, `next`.
+- Version bumped to `0.3.0-dev`.
+
+### Checklist
+- [x] Compiles — `go build ./cmd/tpatch` OK
+- [x] Tests pass — `go test ./...` green across 7 packages (adds Anthropic/factory, retry, cycle/test/next tests)
+- [x] Formatted — `gofmt -l .` clean
+- [x] Artifacts deterministic — raw-response logging is per-attempt, recipe execution unchanged
+- [x] Secrets safe — Anthropic auth still by env-var reference (AuthEnv); no secrets touched
+- [x] Matches SPEC — new commands documented in all 6 skill formats; parity guard enforces it
+- [x] Handoff accurate — CURRENT.md updated; ROADMAP M7/M8/M9 marked ✅
+
+### Notes
+- `Provider` interface unchanged; adding providers is purely additive.
+- `--no-retry` uses a context value rather than changing every workflow signature — minimal blast radius.
+- `tpatch next` distinguishes sub-states of `defined` (needs explore vs implement vs apply) by probing the feature directory, so the harness contract stays meaningful across phases.
+
+### Action Taken
+Session ended pending supervisor approval.
+
+---
+
 ## 2026-04-16 — Gap Closure (8 gaps) — APPROVED
 
 **Task**: Close 8 gaps from unified review before supervisor handoff  

@@ -11,14 +11,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/tesserabox/tpatch/assets"
-	"github.com/tesserabox/tpatch/internal/gitutil"
-	"github.com/tesserabox/tpatch/internal/provider"
-	"github.com/tesserabox/tpatch/internal/store"
-	"github.com/tesserabox/tpatch/internal/workflow"
+	"github.com/tesserabox/tesserapatch/assets"
+	"github.com/tesserabox/tesserapatch/internal/gitutil"
+	"github.com/tesserabox/tesserapatch/internal/provider"
+	"github.com/tesserabox/tesserapatch/internal/store"
+	"github.com/tesserabox/tesserapatch/internal/workflow"
 )
 
-const version = "0.2.0-dev"
+const version = "0.3.0-dev"
 
 // Execute runs the tpatch CLI root command.
 func Execute() int {
@@ -56,6 +56,9 @@ func buildRootCmd() *cobra.Command {
 		reconcileCmd(),
 		providerCmd(),
 		configCmd(),
+		cycleCmd(),
+		testCmd(),
+		nextCmd(),
 	)
 
 	return root
@@ -229,6 +232,9 @@ func analyzeCmd() *cobra.Command {
 			prov, cfg := loadProviderFromStore(s)
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
+			if noRetry, _ := cmd.Flags().GetBool("no-retry"); noRetry {
+				ctx = workflow.WithDisableRetry(ctx, true)
+			}
 
 			result, err := workflow.RunAnalysis(ctx, s, args[0], prov, cfg)
 			if err != nil {
@@ -243,6 +249,7 @@ func analyzeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Duration("timeout", 60*time.Second, "Analysis timeout")
+	cmd.Flags().Bool("no-retry", false, "Disable retry-with-feedback on invalid LLM output")
 	return cmd
 }
 
@@ -262,6 +269,9 @@ func defineCmd() *cobra.Command {
 			prov, cfg := loadProviderFromStore(s)
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
+			if noRetry, _ := cmd.Flags().GetBool("no-retry"); noRetry {
+				ctx = workflow.WithDisableRetry(ctx, true)
+			}
 
 			if err := workflow.RunDefine(ctx, s, args[0], prov, cfg); err != nil {
 				return err
@@ -271,6 +281,7 @@ func defineCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Duration("timeout", 60*time.Second, "Timeout")
+	cmd.Flags().Bool("no-retry", false, "Disable retry-with-feedback on invalid LLM output")
 	return cmd
 }
 
@@ -290,6 +301,9 @@ func exploreCmd() *cobra.Command {
 			prov, cfg := loadProviderFromStore(s)
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
+			if noRetry, _ := cmd.Flags().GetBool("no-retry"); noRetry {
+				ctx = workflow.WithDisableRetry(ctx, true)
+			}
 
 			if err := workflow.RunExplore(ctx, s, args[0], prov, cfg); err != nil {
 				return err
@@ -299,6 +313,7 @@ func exploreCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Duration("timeout", 60*time.Second, "Timeout")
+	cmd.Flags().Bool("no-retry", false, "Disable retry-with-feedback on invalid LLM output")
 	return cmd
 }
 
@@ -318,6 +333,9 @@ func implementCmd() *cobra.Command {
 			prov, cfg := loadProviderFromStore(s)
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
+			if noRetry, _ := cmd.Flags().GetBool("no-retry"); noRetry {
+				ctx = workflow.WithDisableRetry(ctx, true)
+			}
 
 			if err := workflow.RunImplement(ctx, s, args[0], prov, cfg); err != nil {
 				return err
@@ -327,6 +345,7 @@ func implementCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Duration("timeout", 90*time.Second, "Timeout")
+	cmd.Flags().Bool("no-retry", false, "Disable retry-with-feedback on invalid LLM output")
 	return cmd
 }
 
@@ -665,7 +684,7 @@ func providerCheckCmd() *cobra.Command {
 				return fmt.Errorf("provider is not configured — run 'tpatch config set provider.base_url <url>' and 'tpatch config set provider.model <model>'")
 			}
 			timeout, _ := cmd.Flags().GetDuration("timeout")
-			prov := provider.New()
+			prov := provider.NewFromConfig(cfg)
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 
@@ -695,6 +714,22 @@ func providerSetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if preset, _ := cmd.Flags().GetString("preset"); preset != "" {
+				p, ok := providerPresets[strings.ToLower(preset)]
+				if !ok {
+					return fmt.Errorf("unknown preset %q (valid: copilot, openai, openrouter, anthropic, ollama)", preset)
+				}
+				cfg.Provider.Type = p.Type
+				cfg.Provider.BaseURL = p.BaseURL
+				cfg.Provider.Model = p.Model
+				cfg.Provider.AuthEnv = p.AuthEnv
+			}
+			if v, _ := cmd.Flags().GetString("type"); v != "" {
+				if v != "openai-compatible" && v != "anthropic" {
+					return fmt.Errorf("invalid provider type %q (valid: openai-compatible, anthropic)", v)
+				}
+				cfg.Provider.Type = v
+			}
 			if v, _ := cmd.Flags().GetString("base-url"); v != "" {
 				cfg.Provider.BaseURL = v
 			}
@@ -707,14 +742,31 @@ func providerSetCmd() *cobra.Command {
 			if err := s.SaveConfig(cfg); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Provider configured: %s (model=%s)\n", cfg.Provider.BaseURL, cfg.Provider.Model)
+			fmt.Fprintf(cmd.OutOrStdout(), "Provider configured: type=%s url=%s model=%s\n",
+				cfg.Provider.Type, cfg.Provider.BaseURL, cfg.Provider.Model)
 			return nil
 		},
 	}
+	cmd.Flags().String("preset", "", "Preset: copilot | openai | openrouter | anthropic | ollama")
+	cmd.Flags().String("type", "", "Provider type: openai-compatible | anthropic")
 	cmd.Flags().String("base-url", "", "Provider base URL")
 	cmd.Flags().String("model", "", "Default model")
 	cmd.Flags().String("auth-env", "", "Environment variable name for auth token")
 	return cmd
+}
+
+// providerPresets are vetted one-line configurations for common providers.
+// Each preset matches a widely used endpoint that speaks either the
+// OpenAI chat completions API or the Anthropic Messages API — the two
+// protocols implemented in internal/provider.
+var providerPresets = map[string]struct {
+	Type, BaseURL, Model, AuthEnv string
+}{
+	"copilot":    {"openai-compatible", "http://localhost:4141", "claude-sonnet-4", "GITHUB_TOKEN"},
+	"openai":     {"openai-compatible", "https://api.openai.com", "gpt-4o", "OPENAI_API_KEY"},
+	"openrouter": {"openai-compatible", "https://openrouter.ai/api", "anthropic/claude-sonnet-4", "OPENROUTER_API_KEY"},
+	"anthropic":  {"anthropic", "https://api.anthropic.com", "claude-sonnet-4-5", "ANTHROPIC_API_KEY"},
+	"ollama":     {"openai-compatible", "http://localhost:11434", "llama3.2", ""},
 }
 
 // ─── config ──────────────────────────────────────────────────────────────────
@@ -776,8 +828,16 @@ func configSetCmd() *cobra.Command {
 					return fmt.Errorf("invalid merge_strategy %q (valid: 3way, rebase)", value)
 				}
 				cfg.MergeStrategy = value
+			case "max_retries":
+				var n int
+				if _, err := fmt.Sscanf(value, "%d", &n); err != nil || n < 0 {
+					return fmt.Errorf("invalid max_retries %q (must be non-negative integer)", value)
+				}
+				cfg.MaxRetries = n
+			case "test_command":
+				cfg.TestCommand = value
 			default:
-				return fmt.Errorf("unknown config key %q (valid: provider.type, provider.base_url, provider.model, provider.auth_env, merge_strategy)", key)
+				return fmt.Errorf("unknown config key %q (valid: provider.type, provider.base_url, provider.model, provider.auth_env, merge_strategy, max_retries, test_command)", key)
 			}
 			if err := s.SaveConfig(cfg); err != nil {
 				return err
@@ -852,7 +912,7 @@ func loadProviderFromStore(s *store.Store) (provider.Provider, provider.Config) 
 	if !provCfg.Configured() {
 		return nil, provCfg
 	}
-	return provider.New(), provCfg
+	return provider.NewFromConfig(provCfg), provCfg
 }
 
 // autoDetectProvider probes known provider endpoints and auto-configures if found.
@@ -867,36 +927,38 @@ func autoDetectProvider(cmd *cobra.Command, s *store.Store) {
 		return // already configured
 	}
 
-	candidates := []struct {
-		baseURL string
-		model   string
-		authEnv string
-		name    string
-	}{
-		{"http://localhost:4141", "claude-sonnet-4", "GITHUB_TOKEN", "copilot-api (localhost:4141)"},
+	type candidate struct {
+		name   string
+		preset struct{ Type, BaseURL, Model, AuthEnv string }
+	}
+
+	candidates := []candidate{
+		{"copilot-api (localhost:4141)", providerPresets["copilot"]},
+		{"Ollama (localhost:11434)", providerPresets["ollama"]},
 	}
 
 	// Also check env vars for direct API keys
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		candidates = append(candidates, candidate{"Anthropic (from ANTHROPIC_API_KEY)", providerPresets["anthropic"]})
+	}
 	if os.Getenv("OPENAI_API_KEY") != "" {
-		candidates = append(candidates, struct {
-			baseURL string
-			model   string
-			authEnv string
-			name    string
-		}{"https://api.openai.com", "gpt-4o", "OPENAI_API_KEY", "OpenAI (from OPENAI_API_KEY)"})
+		candidates = append(candidates, candidate{"OpenAI (from OPENAI_API_KEY)", providerPresets["openai"]})
+	}
+	if os.Getenv("OPENROUTER_API_KEY") != "" {
+		candidates = append(candidates, candidate{"OpenRouter (from OPENROUTER_API_KEY)", providerPresets["openrouter"]})
 	}
 
-	prov := provider.New()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	for _, c := range candidates {
-		provCfg := provider.Config{Type: "openai-compatible", BaseURL: c.baseURL, Model: c.model, AuthEnv: c.authEnv}
+		provCfg := provider.Config{Type: c.preset.Type, BaseURL: c.preset.BaseURL, Model: c.preset.Model, AuthEnv: c.preset.AuthEnv}
+		prov := provider.NewFromConfig(provCfg)
 		if _, err := prov.Check(ctx, provCfg); err == nil {
-			cfg.Provider.Type = "openai-compatible"
-			cfg.Provider.BaseURL = c.baseURL
-			cfg.Provider.Model = c.model
-			cfg.Provider.AuthEnv = c.authEnv
+			cfg.Provider.Type = c.preset.Type
+			cfg.Provider.BaseURL = c.preset.BaseURL
+			cfg.Provider.Model = c.preset.Model
+			cfg.Provider.AuthEnv = c.preset.AuthEnv
 			s.SaveConfig(cfg)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Auto-detected provider: %s\n", c.name)
 			return

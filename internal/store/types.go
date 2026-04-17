@@ -72,6 +72,8 @@ type ReconcileSummary struct {
 type Config struct {
 	Provider      ProviderConfig `json:"provider"`
 	MergeStrategy string         `json:"merge_strategy"` // "3way" (default) or "rebase"
+	MaxRetries    int            `json:"max_retries"`    // LLM validation retries (default 2)
+	TestCommand   string         `json:"test_command"`   // shell command run by `tpatch test`
 }
 
 // ProviderConfig stores the LLM provider settings.

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tesserabox/tpatch/internal/provider"
-	"github.com/tesserabox/tpatch/internal/store"
+	"github.com/tesserabox/tesserapatch/internal/provider"
+	"github.com/tesserabox/tesserapatch/internal/store"
 )
 
 // AnalysisResult is the structured output of the analysis phase.
@@ -50,20 +50,31 @@ func RunAnalysis(ctx context.Context, s *store.Store, slug string, prov provider
 		systemPrompt := buildAnalysisSystemPrompt()
 		userPrompt := buildAnalysisUserPrompt(request, fileTree, guidance)
 
-		response, err := prov.Generate(ctx, cfg, provider.GenerateRequest{
+		storeCfg, _ := s.LoadConfig()
+		var tmp AnalysisResult
+		response, err := GenerateWithRetry(ctx, prov, cfg, provider.GenerateRequest{
 			SystemPrompt: systemPrompt,
 			UserPrompt:   userPrompt,
 			MaxTokens:    4096,
 			Temperature:  0.1,
+		}, RetryOptions{
+			MaxRetries: storeCfg.MaxRetries,
+			Validate:   JSONObjectValidator(&tmp),
+			LogPrefix:  "analyze",
+			Slug:       slug,
+			Store:      s,
 		})
 		if err != nil {
-			// Fall back to heuristic on provider error
+			// Fall back to heuristic on provider/validation error
 			result = heuristicAnalysis(request, slug)
 			result.UnresolvedQuestions = append(result.UnresolvedQuestions, fmt.Sprintf("Provider error: %v", err))
+			if response != "" {
+				s.WriteArtifact(slug, "raw-analysis-response.txt", response)
+			}
 		} else {
 			result, err = parseAnalysisResponse(response)
 			if err != nil {
-				// If parse fails, use heuristic with raw response as notes
+				// Should be unreachable (validator already parsed), but be defensive.
 				result = heuristicAnalysis(request, slug)
 				result.ImplementationNotes = append(result.ImplementationNotes, "Raw LLM response available in artifacts")
 				s.WriteArtifact(slug, "raw-analysis-response.txt", response)
@@ -116,10 +127,17 @@ func RunDefine(ctx context.Context, s *store.Store, slug string, prov provider.P
 		systemPrompt := "You are a senior software engineer. Generate acceptance criteria and an implementation plan for the following feature request. Output as markdown with ## Acceptance Criteria (numbered list) and ## Implementation Plan sections."
 		userPrompt := fmt.Sprintf("# Feature Request\n\n%s\n\n# Analysis\n\n%s\n%s", request, analysisMD, analysisTxt)
 
-		response, err := prov.Generate(ctx, cfg, provider.GenerateRequest{
+		storeCfg, _ := s.LoadConfig()
+		response, err := GenerateWithRetry(ctx, prov, cfg, provider.GenerateRequest{
 			SystemPrompt: systemPrompt,
 			UserPrompt:   userPrompt,
 			MaxTokens:    4096,
+		}, RetryOptions{
+			MaxRetries: storeCfg.MaxRetries,
+			Validate:   NonEmptyValidator(),
+			LogPrefix:  "define",
+			Slug:       slug,
+			Store:      s,
 		})
 		if err != nil {
 			specContent = heuristicDefine(slug, request)
@@ -154,10 +172,17 @@ func RunExplore(ctx context.Context, s *store.Store, slug string, prov provider.
 		systemPrompt := "You are a senior software engineer exploring a codebase. Identify the specific files and code sections relevant to implementing the requested feature. Output as markdown with ## Relevant Files (list with paths and descriptions) and ## Minimal Changeset (what needs to change)."
 		userPrompt := fmt.Sprintf("# Feature\n%s\n\n# Analysis\n%s\n\n# Spec\n%s\n\n# File Tree\n```\n%s\n```", request, analysisMD, specMD, fileTree)
 
-		response, err := prov.Generate(ctx, cfg, provider.GenerateRequest{
+		storeCfg, _ := s.LoadConfig()
+		response, err := GenerateWithRetry(ctx, prov, cfg, provider.GenerateRequest{
 			SystemPrompt: systemPrompt,
 			UserPrompt:   userPrompt,
 			MaxTokens:    4096,
+		}, RetryOptions{
+			MaxRetries: storeCfg.MaxRetries,
+			Validate:   NonEmptyValidator(),
+			LogPrefix:  "explore",
+			Slug:       slug,
+			Store:      s,
 		})
 		if err != nil {
 			explorationContent = heuristicExplore(slug, fileTree)

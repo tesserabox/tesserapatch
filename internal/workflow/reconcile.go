@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tesserabox/tpatch/internal/gitutil"
-	"github.com/tesserabox/tpatch/internal/provider"
-	"github.com/tesserabox/tpatch/internal/store"
+	"github.com/tesserabox/tesserapatch/internal/gitutil"
+	"github.com/tesserabox/tesserapatch/internal/provider"
+	"github.com/tesserabox/tesserapatch/internal/store"
 )
 
 // ReconcileResult is the outcome for a single feature.

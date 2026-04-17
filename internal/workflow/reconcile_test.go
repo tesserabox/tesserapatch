@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tesserabox/tpatch/internal/provider"
-	"github.com/tesserabox/tpatch/internal/store"
+	"github.com/tesserabox/tesserapatch/internal/provider"
+	"github.com/tesserabox/tesserapatch/internal/store"
 )
 
 // setupGitRepo creates a git repo in dir with an initial commit.

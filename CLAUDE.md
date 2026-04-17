@@ -52,8 +52,9 @@ These folders contain the three original prototypes. Read them for reference but
 4. Do not store secrets in tracked files. Use secret-by-reference pattern.
 5. Prefer deterministic artifacts in `.tpatch/` over hidden session state.
 6. Run `gofmt`, `go test ./...`, and `go build ./cmd/tpatch` after code changes.
-7. Update `docs/handoff/CURRENT.md` before ending any session or when context is running low.
-8. Keep shipped skill assets aligned with CLI contract. The `assets_test.go` parity guard must pass.
+7. **Update `docs/handoff/CURRENT.md` at every phase transition** — not only before ending a session. See `AGENTS.md` → "Context Preservation Rules" for the full cadence.
+8. **Log to `docs/supervisor/LOG.md` on every review** and flip `docs/ROADMAP.md` status the moment a milestone ticks over.
+9. Keep shipped skill assets aligned with CLI contract. The `assets_test.go` parity guard must pass.
 
 ## Repository Shape
 

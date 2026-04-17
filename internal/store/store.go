@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tesserabox/tpatch/internal/safety"
+	"github.com/tesserabox/tesserapatch/internal/safety"
 )
 
 // Store provides read/write access to the .tpatch/ workspace.
@@ -65,13 +65,19 @@ func Init(root string) (*Store, error) {
 	// Write config.yaml
 	configContent := `# Tessera Patch configuration
 provider:
-  type: openai-compatible
+  type: openai-compatible  # openai-compatible | anthropic
   base_url: ""
   model: ""
   auth_env: ""  # env var name containing auth token (NOT the secret itself)
 
 # Merge strategy for applying patches: "3way" (default) or "rebase"
 merge_strategy: 3way
+
+# Max LLM validation retries when output fails to parse (0 disables retry)
+max_retries: 2
+
+# Shell command run by ` + "`tpatch test <slug>`" + ` (e.g. "go test ./...", "bun test")
+test_command: ""
 `
 	if err := writeFile(store.configPath(), configContent); err != nil {
 		return nil, err
@@ -293,6 +299,10 @@ func (s *Store) SaveConfig(cfg Config) error {
 	if mergeStrat == "" {
 		mergeStrat = "3way"
 	}
+	maxRetries := cfg.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
 	content := fmt.Sprintf(`# Tessera Patch configuration
 provider:
   type: %s
@@ -302,8 +312,15 @@ provider:
 
 # Merge strategy for applying patches: "3way" (default) or "rebase"
 merge_strategy: %s
+
+# Max LLM validation retries when output fails to parse (0 disables retry)
+max_retries: %d
+
+# Shell command run by `+"`tpatch test <slug>`"+` (e.g. "go test ./...", "bun test")
+test_command: %s
 `, yamlQuote(cfg.Provider.Type), yamlQuote(cfg.Provider.BaseURL),
-		yamlQuote(cfg.Provider.Model), yamlQuote(cfg.Provider.AuthEnv), mergeStrat)
+		yamlQuote(cfg.Provider.Model), yamlQuote(cfg.Provider.AuthEnv), mergeStrat,
+		maxRetries, yamlQuote(cfg.TestCommand))
 	return writeFile(s.configPath(), content)
 }
 
@@ -448,6 +465,15 @@ func parseYAMLConfig(content string) Config {
 	if cfg.MergeStrategy == "" {
 		cfg.MergeStrategy = "3way"
 	}
+	if v := extractYAMLValue(content, "max_retries"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
+			cfg.MaxRetries = n
+		}
+	} else {
+		cfg.MaxRetries = 2
+	}
+	cfg.TestCommand = extractYAMLValue(content, "test_command")
 	return cfg
 }
 

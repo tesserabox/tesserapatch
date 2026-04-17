@@ -18,6 +18,9 @@ Tessera Patch customizes open-source projects through natural-language patches w
 - `tpatch reconcile` — Reconcile with upstream
 - `tpatch provider check` — Validate provider
 - `tpatch config show|set` — Manage config
+- `tpatch cycle <slug>` — Run analyze→define→explore→implement→apply→record in sequence (batch or `--interactive`)
+- `tpatch test <slug>` — Run the configured `test_command` and record the outcome
+- `tpatch next <slug>` — Emit the next action for a feature (`--format harness-json` for structured consumption)
 
 ## Lifecycle
 

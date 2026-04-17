@@ -26,6 +26,9 @@ analyse → define → explore → implement → test → record → reconcile
 | `tpatch reconcile [slug...]` | Reconcile features against upstream |
 | `tpatch provider check` | Validate LLM provider endpoint |
 | `tpatch config show\|set` | Manage configuration |
+| `tpatch cycle <slug>` | Run the full lifecycle (analyze→define→explore→implement→apply→record) in sequence. Add `--interactive` to pause between phases. |
+| `tpatch test <slug>` | Run the configured `test_command` and record the pass/fail outcome |
+| `tpatch next <slug>` | Emit the next logical action for a feature. `--format harness-json` outputs structured JSON for consumption by coding-agent harnesses |
 
 ## .tpatch/ Structure
 
