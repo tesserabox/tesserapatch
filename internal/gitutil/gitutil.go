@@ -520,6 +520,14 @@ func scanConflictMarkers(root string) []string {
 	return out
 }
 
+// HasConflictMarkers reports whether data contains both `<<<<<<<`
+// and `>>>>>>>` at the start of any line — the canonical signature of
+// an unresolved git merge. Exported so the phase-3.5 validation gate
+// can check a single file's in-memory content without walking a tree.
+func HasConflictMarkers(data []byte) bool {
+	return bytesHasLine(data, "<<<<<<<") && bytesHasLine(data, ">>>>>>>")
+}
+
 // bytesHasLine reports whether data contains prefix at the start of any
 // line. Avoids allocating a string for large files.
 func bytesHasLine(data []byte, prefix string) bool {
