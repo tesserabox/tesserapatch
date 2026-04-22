@@ -133,7 +133,17 @@ See `docs/milestones/M9-interactive-harness.md` for task list.
 
 **Opt-in**: `tpatch config set provider.copilot_native_optin true` → `tpatch provider copilot-login` → `tpatch provider set --preset copilot-native`.
 
-## M12+ — Future
+## M12 — Provider-Assisted Conflict Resolver 🔨 (Tranche B2, v0.5.0)
+
+**Goal**: Phase 3.5 of reconcile — when 3-way merge fails, provider resolves each conflicted file in a shadow `git worktree`. Validation gates output; accept/reject is atomic.
+
+**Scope doc**: `docs/milestones/M12-provider-conflict-resolver.md` (PRD: `docs/prds/PRD-provider-conflict-resolver.md`, ADR: `docs/adrs/ADR-010-provider-conflict-resolver.md`)
+
+**Ships**: shadow worktree plumbing, per-file sequential resolver, Go-in-tree + configurable syntax validation, `reconciling-shadow` state, 6-skill update, ≥5 golden scenarios.
+
+**Out of scope** (v0.5.x follow-ups): parallel calls, chunked context for huge files, opt-in heuristic fallback, auto spec-drift refresh.
+
+## M13+ — Future
 
 - Cost tracking and token budgeting
 - Multi-repo orchestration

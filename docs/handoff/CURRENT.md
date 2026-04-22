@@ -2,9 +2,26 @@
 
 ## Active Task
 
-- **Task ID**: v0.4.4 — Honest Recipes (pre-B2 ground truth)
-- **Status**: Complete. Shipped.
-- **Next**: Choose Tranche B2 scope (options below).
+- **Task ID**: M12 / Tranche B2 / v0.5.0 — Provider-Assisted Conflict Resolver
+- **Status**: In progress. Scoping landed; implementing `b2-shadow-worktree` first.
+- **PRD**: `docs/prds/PRD-provider-conflict-resolver.md`
+- **Milestone**: `docs/milestones/M12-provider-conflict-resolver.md`
+- **ADR**: `docs/adrs/ADR-010-provider-conflict-resolver.md`
+- **10 todos tracked** (`b2-*`) with dependencies. Next to work: `b2-shadow-worktree`, `b2-validation-gate` (parallel-safe).
+
+### PRD-locked answers to ADR-010's 6 open questions
+
+1. Sequential per-file calls (no parallelism in v0.5.0).
+2. Single combined `patches/NNN-reconcile.patch`; per-file audit in `reconcile-session.json`.
+3. `test_command` is the `--apply` gate; refused if unset.
+4. One shadow per feature; reap prior on new resolve.
+5. Full file with `max_file_bytes` cap (default 200 KB); oversize → `skipped-too-large`.
+6. Golden scenarios harness ships with v0.5.0 (≥5 scenarios).
+
+### Follow-ups registered
+
+- `feat-resolver-heuristic-fallback` (opt-in `--heuristic`, post-B2 maturity).
+- `feat-feature-standalonify` (blocks on `feat-feature-dependencies`).
 
 ## Session Summary
 
