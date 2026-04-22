@@ -4,11 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/tesseracode/tesserapatch/internal/provider"
 	"github.com/tesseracode/tesserapatch/internal/store"
 )
+
+// spinnerMessage maps an internal LogPrefix (analyze/define/explore/
+// implement/...) to the user-facing phase label printed alongside the
+// braille spinner. Any prefix not in the table falls back to a
+// Title-cased "<prefix>..." string.
+func spinnerMessage(prefix string) string {
+	switch prefix {
+	case "analyze":
+		return "Analyzing..."
+	case "define":
+		return "Defining..."
+	case "explore":
+		return "Exploring..."
+	case "implement":
+		return "Implementing..."
+	case "":
+		return "Generating..."
+	default:
+		if len(prefix) == 0 {
+			return "Generating..."
+		}
+		return strings.ToUpper(prefix[:1]) + prefix[1:] + "..."
+	}
+}
 
 // Validator inspects a raw LLM response and returns an error if it cannot be
 // used as-is. The error message is fed back into the retry prompt.
@@ -67,7 +92,9 @@ func GenerateWithRetry(ctx context.Context, prov provider.Provider, cfg provider
 	currentReq := req
 
 	for i := 0; i < attempts; i++ {
+		sp := NewSpinnerIfTTY(os.Stderr, spinnerMessage(opts.LogPrefix))
 		resp, err := prov.Generate(ctx, cfg, currentReq)
+		sp.Stop()
 		if err != nil {
 			// Transport / provider-level error: don't retry with corrective prompt,
 			// surface it immediately.
