@@ -633,6 +633,94 @@ func MergeBase(repoRoot, a, b string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// FilesInPatch returns the unique set of repo-relative file paths
+// touched by a unified diff, parsed from `diff --git a/<path> b/<path>`
+// headers. Paths are returned in first-seen order so the output is
+// stable. Used by `reconcile --accept` to know which paths to restrict
+// the regenerated post-apply.patch to.
+func FilesInPatch(patch string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, line := range strings.Split(patch, "\n") {
+		if !strings.HasPrefix(line, "diff --git ") {
+			continue
+		}
+		// `diff --git a/<p1> b/<p2>` — we take the b-side since new
+		// files have /dev/null on the a-side. Handle quoted paths
+		// loosely; git doesn't quote unless the path needs it.
+		parts := strings.SplitN(line, " b/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		p := strings.TrimSpace(parts[1])
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+// ForwardApplyExcluding applies a patch but skips the listed
+// repo-relative paths entirely. Uses `git apply --3way` with
+// `--exclude=<path>` so that non-excluded hunks land cleanly (or via
+// 3-way merge) while the excluded paths are left untouched for a
+// subsequent explicit overwrite step (e.g., CopyShadowToReal after
+// phase 3.5). Returns an error only if the non-excluded portion of
+// the patch fails to apply.
+func ForwardApplyExcluding(repoRoot, patch string, excludePaths []string) error {
+	args := []string{"apply", "--3way"}
+	for _, p := range excludePaths {
+		args = append(args, "--exclude="+p)
+	}
+	args = append(args, "-")
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoRoot
+	cmd.Stdin = strings.NewReader(patch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git apply (excluding %d path(s)) failed: %s: %w",
+			len(excludePaths), strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// DiffFromCommitForPaths returns `git diff <commit> -- <paths...>`
+// against the working tree. Empty paths slice means the full diff.
+// Before running the diff, untracked paths in the provided list are
+// marked via `git add -N` (intent-to-add) so they appear in the diff
+// output; this mirrors how `tpatch record` handles newly created
+// files. Used by the reconcile --accept derived-refresh flow to
+// regenerate post-apply.patch after the accepted resolution.
+func DiffFromCommitForPaths(repoRoot, commit string, paths []string) (string, error) {
+	// Intent-to-add any paths git doesn't yet know about. `git add -N`
+	// is silent on already-tracked paths, so we can pass the full list.
+	if len(paths) > 0 {
+		addArgs := append([]string{"add", "-N", "--"}, paths...)
+		if _, err := runGit(repoRoot, addArgs...); err != nil {
+			// Non-fatal: the intent-to-add only helps NEW files; if
+			// git refuses (e.g., file doesn't exist), the diff call
+			// below will still see tracked-file changes. Continue.
+			_ = err
+		}
+	}
+	args := []string{"diff", commit}
+	if len(paths) > 0 {
+		args = append(args, "--")
+		args = append(args, paths...)
+	}
+	out, err := runGit(repoRoot, args...)
+	if err != nil {
+		return "", err
+	}
+	result := strings.TrimSpace(out)
+	if result != "" {
+		result += "\n"
+	}
+	return result, nil
+}
+
 // DeriveIncrementalPatch computes the diff that only contains one feature's changes,
 // given the cumulative patches for the previous features and the current feature.
 // prevCumulativePatch = everything up to (but not including) this feature.
