@@ -2,6 +2,31 @@
 
 All notable changes to tpatch are recorded here.
 
+## v0.5.1 — UX Polish & Quick Wins (Tranche C1 / M13)
+
+Low-risk, high-daily-use-impact improvements. 8 items; no new Go dependencies; all prior tests remain green.
+
+### New
+
+- **c1-recipe-stale-guard** — `tpatch implement` now writes `.tpatch/features/<slug>/artifacts/recipe-provenance.json` (sidecar, not a field on `apply-recipe.json` — avoids updating all 6 skill formats). `tpatch apply --mode execute` compares the current recipe hash + HEAD against the sidecar and prints a stderr warning if either drifted since implementation.
+- **c1-apply-default-execute** — `tpatch apply` default mode flipped from `prepare` to `auto` (chains `prepare → execute → done`). **Breaking UX**: pass `--mode prepare` explicitly to retain v0.5.0 behavior. `applyCmd` refactored into `runApplyPrepare / Started / Execute / Done / Auto` helpers.
+- **c1-add-stdin** — `tpatch add` now accepts the feature description from stdin when piped, e.g. `echo "Fix model ID translation" | tpatch add`. Empty stdin is rejected; positional args still work.
+- **c1-progress-indicator** — Braille spinner (150ms cadence) shown during every LLM call. Wired at the single `GenerateWithRetry` choke point so it covers `analyze / define / explore / implement` uniformly. TTY-only by default; can be forced on for tests.
+- **c1-edit-flag** — New `tpatch edit <slug> [--artifact <name>]` opens feature artifacts (`spec.md`, `exploration.md`, `apply-recipe.json`, etc.) in `$EDITOR`. Default artifact is state-aware.
+- **c1-feature-amend** — New `tpatch amend <slug> [<additional notes...>|<stdin>] [--reset]` appends or replaces the feature description. Refuses missing features.
+- **c1-feature-removal** — New `tpatch remove <slug> [--force]` deletes `.tpatch/features/<slug>/` and refreshes `FEATURES.md`. Interactive `[y/N]` prompt on TTY; `--force` or piped stdin skips it.
+- **c1-record-lenient** — New `--lenient` flag on `tpatch record` skips reverse-apply round-trip validation (for whitespace-sensitive files where the check would false-positive). The default failure message now points users at `--lenient`. See commit for investigation notes — synthetic repros of the reported markdown false-positive all passed cleanly, so we ship the documented escape hatch rather than a speculative root-cause fix.
+
+### Breaking UX
+
+- `tpatch apply` without `--mode` now runs the full prepare→execute→done chain. Users or agents that relied on the previous `prepare`-only default must pass `--mode prepare` explicitly.
+
+### Notes
+
+- Version bumped to `0.5.1` in `internal/cli/cobra.go`.
+- No changes to skill assets; parity guard green.
+- All 9 tranche items landed as 9 single-purpose commits on `main`.
+
 ## v0.5.0 — Provider-Assisted Conflict Resolution (Tranche B2 / M12)
 
 Headline ship of ADR-010: `tpatch reconcile --resolve` now routes 3-way conflicts through the configured provider, one file at a time, inside a **shadow worktree** (`.tpatch/shadow/<slug>-<ts>/`) so the real working tree is untouched until you `--accept`.

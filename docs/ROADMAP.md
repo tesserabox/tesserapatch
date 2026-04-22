@@ -143,7 +143,7 @@ See `docs/milestones/M9-interactive-harness.md` for task list.
 
 **Out of scope** (v0.5.x follow-ups): parallel calls, chunked context for huge files, opt-in heuristic fallback, auto spec-drift refresh.
 
-## M13 — UX Polish & Quick Wins (Tranche C1, v0.5.1) 🔨
+## M13 — UX Polish & Quick Wins (Tranche C1, v0.5.1) ✅ (delivered, pending review)
 
 **Goal**: Low-risk, high-daily-use-impact improvements. 8 items: apply default mode, stdin add, progress spinner, editor integration, feature amend/remove, recipe stale guard, record lenient mode.
 
