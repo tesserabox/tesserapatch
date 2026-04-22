@@ -6,10 +6,22 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
+	"github.com/tesseracode/tesserapatch/internal/gitutil"
 	"github.com/tesseracode/tesserapatch/internal/provider"
 	"github.com/tesseracode/tesserapatch/internal/store"
 )
+
+// RecipeProvenance is the sidecar written alongside apply-recipe.json
+// recording the commit the recipe was generated against. The apply
+// --mode execute path reads it to warn on stale recipes. Kept as a
+// sidecar (not a field on ApplyRecipe) so the skill-parity guard's
+// DisallowUnknownFields check does not require updates to 6 skills.
+type RecipeProvenance struct {
+	BaseCommit  string `json:"base_commit"`
+	GeneratedAt string `json:"generated_at"`
+}
 
 // WarnWriter receives non-fatal warnings emitted by workflow phases (e.g.
 // when the implement phase falls back to a heuristic recipe because the
@@ -103,6 +115,20 @@ Output ONLY valid JSON: {"feature": "<slug>", "operations": [...]}`
 		if err := s.WriteArtifact(slug, "apply-recipe.json", string(data)+"\n"); err != nil {
 			return err
 		}
+	}
+
+	// Write provenance sidecar so `apply --mode execute` can warn when
+	// the working tree has drifted from the commit this recipe was
+	// generated against. Best-effort: if HEAD is unreadable (e.g. the
+	// caller is not inside a git repo), skip the sidecar — the guard
+	// is backward-compatible with its absence.
+	if commit, err := gitutil.HeadCommit(s.Root); err == nil && commit != "" {
+		prov := RecipeProvenance{
+			BaseCommit:  commit,
+			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		data, _ := json.MarshalIndent(prov, "", "  ")
+		_ = s.WriteArtifact(slug, "recipe-provenance.json", string(data)+"\n")
 	}
 
 	// State advances to "implementing" — the recipe is ready but the

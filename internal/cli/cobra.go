@@ -467,6 +467,7 @@ func applyCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				warnRecipeStale(cmd.ErrOrStderr(), s, slug)
 				if err := s.MarkFeatureState(slug, store.StateImplementing, "apply --mode execute", "Executing recipe"); err != nil {
 					return err
 				}
@@ -554,6 +555,33 @@ func applyCmd() *cobra.Command {
 	cmd.Flags().String("validation-status", "", "Validation outcome: passed, failed, needs_review")
 	cmd.Flags().String("validation-note", "", "Details about validation")
 	return cmd
+}
+
+// warnRecipeStale prints a stderr warning when the recipe-provenance
+// sidecar indicates the recipe was generated at a commit different
+// from current HEAD. No-op when the sidecar is missing (old recipes)
+// or HEAD is unreadable — this keeps the guard backward-compatible.
+func warnRecipeStale(w io.Writer, s *store.Store, slug string) {
+	raw, err := s.ReadFeatureFile(slug, filepath.Join("artifacts", "recipe-provenance.json"))
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return
+	}
+	var prov workflow.RecipeProvenance
+	if err := json.Unmarshal([]byte(raw), &prov); err != nil || prov.BaseCommit == "" {
+		return
+	}
+	head, err := gitutil.HeadCommit(s.Root)
+	if err != nil || head == "" || head == prov.BaseCommit {
+		return
+	}
+	short := func(sha string) string {
+		if len(sha) > 7 {
+			return sha[:7]
+		}
+		return sha
+	}
+	fmt.Fprintf(w, "warning: recipe was generated at commit %s but HEAD is now %s — results may differ\n",
+		short(prov.BaseCommit), short(head))
 }
 
 // ─── record ──────────────────────────────────────────────────────────────────

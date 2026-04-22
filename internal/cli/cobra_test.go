@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -206,4 +208,125 @@ func TestReconcileTerminalFlagsMutexViaCLI(t *testing.T) {
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("expected 'mutually exclusive' in error, got %q", err.Error())
 	}
+}
+
+// gitInitTestRepo creates a git repo with one committed file so HeadCommit
+// returns a usable SHA. Used by recipe-stale-guard and apply --mode auto
+// tests which need a real HEAD reference.
+func gitInitTestRepo(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	} {
+		c := exec.Command(args[0], args[1:]...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test\n"), 0o644)
+	for _, args := range [][]string{
+		{"git", "add", "."},
+		{"git", "commit", "-m", "init"},
+	} {
+		c := exec.Command(args[0], args[1:]...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+}
+
+func gitHead(t *testing.T, dir string) string {
+	t.Helper()
+	c := exec.Command("git", "rev-parse", "HEAD")
+	c.Dir = dir
+	out, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse: %s: %v", out, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func writeRecipeAndProvenance(t *testing.T, tmpDir, slug, baseCommit string) {
+	t.Helper()
+	artDir := filepath.Join(tmpDir, ".tpatch", "features", slug, "artifacts")
+	if err := os.MkdirAll(artDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recipe := `{
+  "feature": "` + slug + `",
+  "operations": [
+    {"type": "ensure-directory", "path": "src/"}
+  ]
+}
+`
+	if err := os.WriteFile(filepath.Join(artDir, "apply-recipe.json"), []byte(recipe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if baseCommit == "" {
+		return
+	}
+	prov := `{"base_commit":"` + baseCommit + `","generated_at":"2026-04-22T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(filepath.Join(artDir, "recipe-provenance.json"), []byte(prov), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyExecuteRecipeStaleGuard(t *testing.T) {
+	t.Run("matching-head-no-warning", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		gitInitTestRepo(t, tmpDir)
+		runCmd("init", "--path", tmpDir)
+		runCmd("add", "--path", tmpDir, "Test feature stale guard a")
+		slug := "test-feature-stale-guard-a"
+		writeRecipeAndProvenance(t, tmpDir, slug, gitHead(t, tmpDir))
+
+		_, stderr, code := runCmd("apply", "--path", tmpDir, slug, "--mode", "execute")
+		if code != 0 {
+			t.Fatalf("apply execute failed: %s", stderr)
+		}
+		if strings.Contains(stderr, "recipe was generated at commit") {
+			t.Fatalf("did not expect stale-recipe warning, got %q", stderr)
+		}
+	})
+
+	t.Run("mismatched-head-warning", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		gitInitTestRepo(t, tmpDir)
+		runCmd("init", "--path", tmpDir)
+		runCmd("add", "--path", tmpDir, "Test feature stale guard b")
+		slug := "test-feature-stale-guard-b"
+		writeRecipeAndProvenance(t, tmpDir, slug, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+
+		_, stderr, code := runCmd("apply", "--path", tmpDir, slug, "--mode", "execute")
+		if code != 0 {
+			t.Fatalf("apply execute failed: %s", stderr)
+		}
+		if !strings.Contains(stderr, "recipe was generated at commit") {
+			t.Fatalf("expected stale-recipe warning, got %q", stderr)
+		}
+		if !strings.Contains(stderr, "deadbee") {
+			t.Fatalf("expected short SHA of stored commit in warning, got %q", stderr)
+		}
+	})
+
+	t.Run("absent-sidecar-no-warning", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		gitInitTestRepo(t, tmpDir)
+		runCmd("init", "--path", tmpDir)
+		runCmd("add", "--path", tmpDir, "Test feature stale guard c")
+		slug := "test-feature-stale-guard-c"
+		writeRecipeAndProvenance(t, tmpDir, slug, "")
+
+		_, stderr, code := runCmd("apply", "--path", tmpDir, slug, "--mode", "execute")
+		if code != 0 {
+			t.Fatalf("apply execute failed: %s", stderr)
+		}
+		if strings.Contains(stderr, "recipe was generated at commit") {
+			t.Fatalf("did not expect stale-recipe warning when sidecar absent, got %q", stderr)
+		}
+	})
 }
