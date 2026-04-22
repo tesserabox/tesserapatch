@@ -457,3 +457,60 @@ func TestReconcilePhase35_NoProviderBlocks(t *testing.T) {
 		t.Fatalf("expected phase 3.5, got %s", results[0].Phase)
 	}
 }
+
+// TestReconcilePhase35_StatusSummary verifies that blocked-requires-human
+// populates the ReconcileSummary with the phase-3.5 bookkeeping fields
+// (session id, shadow path) where applicable, and that counts are
+// zeroed when the resolver short-circuits on "no provider".
+func TestReconcilePhase35_StatusSummary(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	os.WriteFile(filepath.Join(tmpDir, "shared.txt"), []byte("a\nb\nc\n"), 0o644)
+	gitAdd(t, tmpDir, "shared.txt")
+	gitCommit(t, tmpDir, "add shared")
+	os.WriteFile(filepath.Join(tmpDir, "shared.txt"), []byte("a\nB-local\nc\n"), 0o644)
+	gitAdd(t, tmpDir, "shared.txt")
+	diffCmd := exec.Command("git", "diff", "--cached", "HEAD")
+	diffCmd.Dir = tmpDir
+	patchBytes, _ := diffCmd.Output()
+	patch := string(patchBytes)
+	gitCommit(t, tmpDir, "feature applied")
+	os.WriteFile(filepath.Join(tmpDir, "shared.txt"), []byte("a\nB-upstream\nc\n"), 0o644)
+	gitAdd(t, tmpDir, "shared.txt")
+	gitCommit(t, tmpDir, "upstream diverges")
+
+	s, _ := store.Init(tmpDir)
+	s.AddFeature(store.AddFeatureInput{Title: "Feature", Request: "r"})
+	s.MarkFeatureState("feature", store.StateApplied, "apply", "")
+	s.WriteArtifact("feature", "post-apply.patch", patch)
+
+	_, err := RunReconcile(context.Background(), s, []string{"feature"}, "HEAD", nil, provider.Config{},
+		ReconcileOptions{Resolve: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := s.LoadFeatureStatus("feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != store.StateBlocked {
+		t.Fatalf("expected state blocked (no-provider short-circuit), got %s", st.State)
+	}
+	if st.Reconcile.Outcome != store.ReconcileBlockedRequiresHuman {
+		t.Fatalf("expected outcome blocked-requires-human, got %s", st.Reconcile.Outcome)
+	}
+	// No shadow was created because the resolver never ran (pre-flight
+	// rejection path). These fields must remain zero — otherwise a
+	// fresh `tpatch status` would print a dangling shadow pointer.
+	if st.Reconcile.ShadowPath != "" {
+		t.Errorf("expected empty ShadowPath, got %q", st.Reconcile.ShadowPath)
+	}
+	if st.Reconcile.ResolveSession != "" {
+		t.Errorf("expected empty ResolveSession, got %q", st.Reconcile.ResolveSession)
+	}
+	if st.Reconcile.ResolvedFiles != 0 || st.Reconcile.FailedFiles != 0 || st.Reconcile.SkippedFiles != 0 {
+		t.Errorf("expected all file counts zero, got %d/%d/%d",
+			st.Reconcile.ResolvedFiles, st.Reconcile.FailedFiles, st.Reconcile.SkippedFiles)
+	}
+}

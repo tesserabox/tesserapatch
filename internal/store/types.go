@@ -6,15 +6,16 @@ import "strings"
 type FeatureState string
 
 const (
-	StateRequested      FeatureState = "requested"
-	StateAnalyzed       FeatureState = "analyzed"
-	StateDefined        FeatureState = "defined"
-	StateImplementing   FeatureState = "implementing"
-	StateApplied        FeatureState = "applied"
-	StateActive         FeatureState = "active"
-	StateReconciling    FeatureState = "reconciling"
-	StateBlocked        FeatureState = "blocked"
-	StateUpstreamMerged FeatureState = "upstream_merged"
+	StateRequested         FeatureState = "requested"
+	StateAnalyzed          FeatureState = "analyzed"
+	StateDefined           FeatureState = "defined"
+	StateImplementing      FeatureState = "implementing"
+	StateApplied           FeatureState = "applied"
+	StateActive            FeatureState = "active"
+	StateReconciling       FeatureState = "reconciling"
+	StateReconcilingShadow FeatureState = "reconciling-shadow"
+	StateBlocked           FeatureState = "blocked"
+	StateUpstreamMerged    FeatureState = "upstream_merged"
 )
 
 // CompatibilityStatus describes how compatible a feature is with the base project.
@@ -83,6 +84,14 @@ type ReconcileSummary struct {
 	UpstreamRef    string           `json:"upstream_ref,omitempty"`
 	UpstreamCommit string           `json:"upstream_commit,omitempty"`
 	Outcome        ReconcileOutcome `json:"outcome,omitempty"`
+
+	// Phase-3.5 (M12 / ADR-010) fields. Populated only when the
+	// resolver runs; remain zero on the classical phases 1-4 paths.
+	ShadowPath     string `json:"shadow_path,omitempty"`
+	ResolveSession string `json:"resolve_session_id,omitempty"`
+	ResolvedFiles  int    `json:"resolved_files,omitempty"`
+	FailedFiles    int    `json:"failed_files,omitempty"`
+	SkippedFiles   int    `json:"skipped_files,omitempty"`
 }
 
 // Config holds the .tpatch/config.yaml contents.

@@ -217,6 +217,18 @@ func statusCmd() *cobra.Command {
 					if st.Notes != "" {
 						fmt.Fprintf(out, "  Notes:         %s\n", st.Notes)
 					}
+					if st.State == store.StateReconcilingShadow || st.Reconcile.ShadowPath != "" {
+						fmt.Fprintf(out, "  Shadow:        %s\n", st.Reconcile.ShadowPath)
+						if st.Reconcile.ResolveSession != "" {
+							fmt.Fprintf(out, "  Session:       %s\n", st.Reconcile.ResolveSession)
+						}
+						fmt.Fprintf(out, "  Files:         %d resolved, %d failed, %d skipped\n",
+							st.Reconcile.ResolvedFiles, st.Reconcile.FailedFiles, st.Reconcile.SkippedFiles)
+						if st.State == store.StateReconcilingShadow {
+							fmt.Fprintf(out, "  Next:          tpatch reconcile --shadow-diff %s  |  --accept %s  |  --reject %s\n",
+								st.Slug, st.Slug, st.Slug)
+						}
+					}
 				}
 			}
 			return nil

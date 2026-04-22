@@ -3,7 +3,7 @@
 ## Active Task
 
 - **Task ID**: M12 / Tranche B2 / v0.5.0 — Provider-Assisted Conflict Resolver
-- **Status**: In progress. **3 of 10 b2 todos done** (shadow + validation + resolver-core). Next: `b2-reconcile-wiring`.
+- **Status**: In progress. **5 of 10 b2 todos done** (shadow + validation + resolver-core + reconcile-wiring + state-machine). Next: `b2-cli-flags` or `b2-golden-tests` (parallel-safe).
 - **PRD**: `docs/prds/PRD-provider-conflict-resolver.md`
 - **Milestone**: `docs/milestones/M12-provider-conflict-resolver.md`
 - **ADR**: `docs/adrs/ADR-010-provider-conflict-resolver.md`
@@ -24,9 +24,9 @@
 | `b2-shadow-worktree` | ✅ done | `8bd8eb6` | `internal/gitutil/shadow.go` + test |
 | `b2-validation-gate` | ✅ done | `bf28b58` | `internal/workflow/validation.go` + test; `gitutil.HasConflictMarkers` exported |
 | `b2-resolver-core` | ✅ done | `25b7774` | `internal/workflow/resolver.go` + test |
-| `b2-reconcile-wiring` | ⏭️ NEXT | — | modify `internal/workflow/reconcile.go` |
-| `b2-state-machine` | blocked on wiring | — | `reconciling-shadow` state + `reconcile-session.json` schema |
-| `b2-cli-flags` | blocked on wiring+state | — | `--resolve --apply --accept --reject --shadow-diff --max-conflicts --model` |
+| `b2-reconcile-wiring` | ✅ done | `53b38ee` | `internal/workflow/reconcile.go` + `gitutil.FileAtCommit`/`MergeBase` + test |
+| `b2-state-machine` | ✅ done | (this commit) | `StateReconcilingShadow` + `ReconcileSummary` shadow fields + `status` command surfaces shadow pointer + test |
+| `b2-cli-flags` | ⏭️ NEXT | — | `--resolve --apply --accept --reject --shadow-diff --max-conflicts --model` |
 | `b2-derived-refresh` | blocked on state | — | `store.RefreshDerivedArtifacts` atomic on accept |
 | `b2-golden-tests` | unblocked (parallel) | — | `tests/reconcile/golden/` ≥5 scenarios |
 | `b2-skills-update` | blocked on cli+refresh | — | 6 skills + docs/agent-as-provider.md |

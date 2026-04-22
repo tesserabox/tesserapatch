@@ -439,6 +439,11 @@ func updateFeatureState(s *store.Store, slug string, result *ReconcileResult) {
 		UpstreamRef:    result.UpstreamRef,
 		UpstreamCommit: result.UpstreamCommit,
 		Outcome:        result.Outcome,
+		ShadowPath:     result.ShadowPath,
+		ResolveSession: result.ResolveSession,
+		ResolvedFiles:  len(result.ResolvedFiles),
+		FailedFiles:    len(result.FailedFiles),
+		SkippedFiles:   len(result.SkippedFiles),
 	}
 	status.LastCommand = "reconcile"
 	status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -453,6 +458,15 @@ func updateFeatureState(s *store.Store, slug string, result *ReconcileResult) {
 	case store.ReconcileStillNeeded:
 		status.State = store.StateApplied
 		status.Notes = "Feature still needed — partial upstream adoption"
+	case store.ReconcileShadowAwaiting:
+		status.State = store.StateReconcilingShadow
+		status.Notes = fmt.Sprintf("Phase 3.5 staged %d resolved file(s) in shadow worktree — review with `tpatch reconcile --shadow-diff %s`, then `--accept` or `--reject`", len(result.ResolvedFiles), slug)
+	case store.ReconcileBlockedTooManyConflicts:
+		status.State = store.StateBlocked
+		status.Notes = "Reconciliation blocked — conflict count exceeds --max-conflicts cap"
+	case store.ReconcileBlockedRequiresHuman:
+		status.State = store.StateBlocked
+		status.Notes = "Phase 3.5 could not resolve all files (provider/validation failure) — manual intervention required"
 	case store.ReconcileBlocked:
 		status.State = store.StateBlocked
 		status.Notes = "Reconciliation blocked — manual intervention needed"
