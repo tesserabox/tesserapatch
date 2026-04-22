@@ -2,20 +2,23 @@
 
 ## Active Task
 
-- **Task ID**: M12 / Tranche B2 / v0.5.0 — Provider-Assisted Conflict Resolver
-- **Status**: ✅ **SHIPPED — all 10 b2 todos done. v0.5.0 tagged.** Headline: phase-3.5 provider-assisted conflict resolution with shadow worktree.
-- **PRD**: `docs/prds/PRD-provider-conflict-resolver.md`
-- **Milestone**: `docs/milestones/M12-provider-conflict-resolver.md`
-- **ADR**: `docs/adrs/ADR-010-provider-conflict-resolver.md`
+- **Task ID**: M13 / Tranche C1 / v0.5.1 — UX Polish & Quick Wins
+- **Status**: 🔨 **In Progress — scoped, implementation prompt ready**
+- **Milestone**: (inline — no separate milestone file for polish tranches)
+- **Previous**: M12 / B2 / v0.5.0 shipped ✅ — archived below
 
-### PRD-locked answers to ADR-010's 6 open questions
+### C1 scope (8 items, all low-risk)
 
-1. Sequential per-file calls (no parallelism in v0.5.0).
-2. Single combined `patches/NNN-reconcile.patch`; per-file audit in `reconcile-session.json`.
-3. `test_command` is the `--apply` gate; refused if unset.
-4. One shadow per feature; reap prior on new resolve.
-5. Full file with `max_file_bytes` cap (default 200 KB); oversize → `skipped-too-large`.
-6. Golden scenarios harness ships with v0.5.0 (≥5 scenarios).
+| Todo ID | Type | Description |
+|---------|------|-------------|
+| `c1-apply-default-execute` | feat | `tpatch apply <slug>` without `--mode` runs prepare→execute→done in one shot; keep `--mode` for granular control |
+| `c1-add-stdin` | feat | `tpatch add -` or pipe detection reads feature description from stdin |
+| `c1-progress-indicator` | feat | Lightweight stderr spinner during LLM calls (zero-dep, stdlib only) |
+| `c1-edit-flag` | feat | `tpatch edit <slug> [artifact]` opens feature artifacts in `$EDITOR` |
+| `c1-feature-amend` | feat | `tpatch amend <slug> <new-description>` updates request.md, optionally resets state |
+| `c1-feature-removal` | feat | `tpatch remove <slug> [--force]` deletes feature directory with confirmation |
+| `c1-recipe-stale-guard` | bug | Warn when `apply-recipe.json` base commit doesn't match current HEAD |
+| `c1-record-lenient` | bug | `tpatch record --lenient` skips reverse-apply check for whitespace-sensitive files |
 
 ### B2 progress
 
