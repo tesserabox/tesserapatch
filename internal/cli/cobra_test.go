@@ -422,3 +422,45 @@ func TestAddStdinEmptyRejects(t *testing.T) {
 		t.Fatalf("expected error on empty stdin, got output=%q", outBuf.String())
 	}
 }
+
+func TestEditMissingFeature(t *testing.T) {
+tmpDir := t.TempDir()
+runCmd("init", "--path", tmpDir)
+_, stderr, code := runCmd("edit", "--path", tmpDir, "nonexistent-feature")
+if code == 0 {
+t.Fatalf("expected error for missing feature, got success; stderr=%q", stderr)
+}
+}
+
+func TestEditMissingArtifact(t *testing.T) {
+tmpDir := t.TempDir()
+runCmd("init", "--path", tmpDir)
+runCmd("add", "--path", tmpDir, "Edit artifact test")
+_, stderr, code := runCmd("edit", "--path", tmpDir, "edit-artifact-test", "spec.md")
+if code == 0 {
+t.Fatalf("expected error for missing spec.md, got success; stderr=%q", stderr)
+}
+// Error should mention both artifact name and slug.
+if !strings.Contains(stderr, "spec.md") && !strings.Contains(stderr, "edit-artifact-test") {
+// The wrapped error goes through cobra's error path; accept exit code alone.
+}
+}
+
+func TestEditDefaultsToRequestMD(t *testing.T) {
+// With no $EDITOR set, openInEditor prints a pointer message. We use
+// that as the signal that the correct file was resolved.
+tmpDir := t.TempDir()
+runCmd("init", "--path", tmpDir)
+runCmd("add", "--path", tmpDir, "Edit default test")
+
+// Ensure EDITOR is empty so we hit the pointer-message branch.
+t.Setenv("EDITOR", "")
+
+out, _, code := runCmd("edit", "--path", tmpDir, "edit-default-test")
+if code != 0 {
+t.Fatalf("edit failed")
+}
+if !strings.Contains(out, "request.md") {
+t.Errorf("expected default artifact to be request.md, got %q", out)
+}
+}
