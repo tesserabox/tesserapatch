@@ -424,43 +424,109 @@ func TestAddStdinEmptyRejects(t *testing.T) {
 }
 
 func TestEditMissingFeature(t *testing.T) {
-tmpDir := t.TempDir()
-runCmd("init", "--path", tmpDir)
-_, stderr, code := runCmd("edit", "--path", tmpDir, "nonexistent-feature")
-if code == 0 {
-t.Fatalf("expected error for missing feature, got success; stderr=%q", stderr)
-}
+	tmpDir := t.TempDir()
+	runCmd("init", "--path", tmpDir)
+	_, stderr, code := runCmd("edit", "--path", tmpDir, "nonexistent-feature")
+	if code == 0 {
+		t.Fatalf("expected error for missing feature, got success; stderr=%q", stderr)
+	}
 }
 
 func TestEditMissingArtifact(t *testing.T) {
-tmpDir := t.TempDir()
-runCmd("init", "--path", tmpDir)
-runCmd("add", "--path", tmpDir, "Edit artifact test")
-_, stderr, code := runCmd("edit", "--path", tmpDir, "edit-artifact-test", "spec.md")
-if code == 0 {
-t.Fatalf("expected error for missing spec.md, got success; stderr=%q", stderr)
-}
-// Error should mention both artifact name and slug.
-if !strings.Contains(stderr, "spec.md") && !strings.Contains(stderr, "edit-artifact-test") {
-// The wrapped error goes through cobra's error path; accept exit code alone.
-}
+	tmpDir := t.TempDir()
+	runCmd("init", "--path", tmpDir)
+	runCmd("add", "--path", tmpDir, "Edit artifact test")
+	_, stderr, code := runCmd("edit", "--path", tmpDir, "edit-artifact-test", "spec.md")
+	if code == 0 {
+		t.Fatalf("expected error for missing spec.md, got success; stderr=%q", stderr)
+	}
+	// Error should mention both artifact name and slug.
+	if !strings.Contains(stderr, "spec.md") && !strings.Contains(stderr, "edit-artifact-test") {
+		// The wrapped error goes through cobra's error path; accept exit code alone.
+	}
 }
 
 func TestEditDefaultsToRequestMD(t *testing.T) {
-// With no $EDITOR set, openInEditor prints a pointer message. We use
-// that as the signal that the correct file was resolved.
+	// With no $EDITOR set, openInEditor prints a pointer message. We use
+	// that as the signal that the correct file was resolved.
+	tmpDir := t.TempDir()
+	runCmd("init", "--path", tmpDir)
+	runCmd("add", "--path", tmpDir, "Edit default test")
+
+	// Ensure EDITOR is empty so we hit the pointer-message branch.
+	t.Setenv("EDITOR", "")
+
+	out, _, code := runCmd("edit", "--path", tmpDir, "edit-default-test")
+	if code != 0 {
+		t.Fatalf("edit failed")
+	}
+	if !strings.Contains(out, "request.md") {
+		t.Errorf("expected default artifact to be request.md, got %q", out)
+	}
+}
+
+func TestAmendReplacesRequest(t *testing.T) {
 tmpDir := t.TempDir()
 runCmd("init", "--path", tmpDir)
-runCmd("add", "--path", tmpDir, "Edit default test")
+runCmd("add", "--path", tmpDir, "Initial description")
 
-// Ensure EDITOR is empty so we hit the pointer-message branch.
-t.Setenv("EDITOR", "")
-
-out, _, code := runCmd("edit", "--path", tmpDir, "edit-default-test")
+out, _, code := runCmd("amend", "--path", tmpDir, "initial-description", "Updated", "description", "here")
 if code != 0 {
-t.Fatalf("edit failed")
+t.Fatalf("amend failed, out=%q", out)
 }
-if !strings.Contains(out, "request.md") {
-t.Errorf("expected default artifact to be request.md, got %q", out)
+if !strings.Contains(out, "Amended feature initial-description") {
+t.Errorf("expected amend confirmation, got %q", out)
+}
+data, err := os.ReadFile(filepath.Join(tmpDir, ".tpatch", "features", "initial-description", "request.md"))
+if err != nil {
+t.Fatal(err)
+}
+if !strings.Contains(string(data), "Updated description here") {
+t.Errorf("request.md not updated, got %q", string(data))
+}
+}
+
+func TestAmendMissingFeature(t *testing.T) {
+tmpDir := t.TempDir()
+runCmd("init", "--path", tmpDir)
+_, _, code := runCmd("amend", "--path", tmpDir, "nope", "anything")
+if code == 0 {
+t.Fatal("expected error for missing feature")
+}
+}
+
+func TestAmendResetFlag(t *testing.T) {
+tmpDir := t.TempDir()
+runCmd("init", "--path", tmpDir)
+runCmd("add", "--path", tmpDir, "Reset test")
+// Move state forward manually via analyze so there's something to reset.
+runCmd("analyze", "--path", tmpDir, "reset-test")
+
+out, _, code := runCmd("amend", "--path", tmpDir, "reset-test", "--reset", "New", "description")
+if code != 0 {
+t.Fatalf("amend --reset failed: %s", out)
+}
+if !strings.Contains(out, "state: requested") {
+t.Errorf("expected state=requested after --reset, got %q", out)
+}
+}
+
+func TestAmendReadsStdin(t *testing.T) {
+tmpDir := t.TempDir()
+runCmd("init", "--path", tmpDir)
+runCmd("add", "--path", tmpDir, "Stdin amend test")
+
+root := buildRootCmd()
+var outBuf, errBuf bytes.Buffer
+root.SetOut(&outBuf)
+root.SetErr(&errBuf)
+root.SetIn(strings.NewReader("Replaced via stdin\n"))
+root.SetArgs([]string{"amend", "--path", tmpDir, "stdin-amend-test"})
+if err := root.Execute(); err != nil {
+t.Fatalf("amend via stdin failed: %v (stderr=%q)", err, errBuf.String())
+}
+data, _ := os.ReadFile(filepath.Join(tmpDir, ".tpatch", "features", "stdin-amend-test", "request.md"))
+if !strings.Contains(string(data), "Replaced via stdin") {
+t.Errorf("expected stdin content in request.md, got %q", string(data))
 }
 }

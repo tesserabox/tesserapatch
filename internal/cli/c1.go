@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -86,5 +88,59 @@ func editCmd() *cobra.Command {
 			return nil
 		},
 	}
+	return cmd
+}
+
+// ─── amend ───────────────────────────────────────────────────────────────────
+
+func amendCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "amend <slug> [description...]",
+		Short: "Replace a feature's request.md (reads stdin when no description args)",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			slug := args[0]
+			s, err := openStoreFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(featureDirPath(s, slug)); err != nil {
+				return fmt.Errorf("feature %s does not exist", slug)
+			}
+
+			var description string
+			switch {
+			case len(args) > 1:
+				description = strings.Join(args[1:], " ")
+			case stdinIsPiped(cmd):
+				raw, err := io.ReadAll(cmd.InOrStdin())
+				if err != nil {
+					return fmt.Errorf("read stdin: %w", err)
+				}
+				description = strings.TrimSpace(string(raw))
+				if description == "" {
+					return fmt.Errorf("empty description on stdin")
+				}
+			default:
+				return fmt.Errorf("provide a new description as arguments or pipe via stdin")
+			}
+
+			if err := s.WriteFeatureFile(slug, "request.md", description+"\n"); err != nil {
+				return err
+			}
+
+			reset, _ := cmd.Flags().GetBool("reset")
+			if reset {
+				if err := s.MarkFeatureState(slug, store.StateRequested, "amend --reset", "Request replaced; state reset"); err != nil {
+					return err
+				}
+			}
+
+			status, _ := s.LoadFeatureStatus(slug)
+			fmt.Fprintf(cmd.OutOrStdout(), "Amended feature %s (state: %s)\n", slug, status.State)
+			return nil
+		},
+	}
+	cmd.Flags().Bool("reset", false, "Reset feature state to \"requested\"")
 	return cmd
 }
