@@ -186,13 +186,94 @@ Resolution: edit the new upstream file to add
 `export * from "./telemetry";` after the renamed
 `export * from "./deprecated";` line. Both intents preserved.
 
-## Provider-assisted automation (coming)
+## Provider-assisted automation (v0.5.0 — shipped)
 
 ADR-010 (`docs/adrs/ADR-010-provider-conflict-resolver.md`) locks the
-design for v0.5.0's headline: automating the 3WayConflicts playbook
-via the configured provider. Phase 3.5 in reconcile will run per-file
-provider calls with `spec.md` + `exploration.md` + the conflicted file
-as context, validate the proposed resolution, optionally run repo
-tests, and surface a report with `--apply` / `--accept` / `--reject`.
+design; v0.5.0 ships it as **Phase 3.5** of `tpatch reconcile`.
 
-Until then, the playbook above is the supported path.
+### Flow
+
+```
+tpatch reconcile --resolve            # provider merges each conflicted file
+                                      # into a shadow worktree at
+                                      # .tpatch/shadow/<slug>-<ts>/
+                                      # real tree is never touched
+
+tpatch reconcile --shadow-diff <slug> # preview resolver output (read-only)
+tpatch reconcile --accept <slug>      # apply non-conflicting hunks + copy
+                                      # shadow files onto real tree,
+                                      # regenerate post-apply.patch,
+                                      # snapshot patches/NNN-reconcile.patch
+tpatch reconcile --reject <slug>      # discard shadow, no tree changes
+```
+
+The four terminal flags (`--accept` / `--reject` / `--shadow-diff`, plus
+`--apply` for auto-accept when every file is `resolved`) take a slug as
+the flag value, not a positional arg. They are mutually exclusive.
+
+### Verdicts
+
+| verdict | meaning |
+|---|---|
+| `shadow-awaiting` | All conflicted files resolved; shadow ready for `--accept`. Feature state: `reconciling-shadow`. |
+| `blocked-requires-human` | At least one file failed validation (still contains `<<<<<<<`, corrupted content, or no provider configured). ADR-010 D9: there is no heuristic fallback. |
+| `blocked-too-many-conflicts` | Conflict count exceeded `--max-conflicts` (default 3); provider was never called. |
+
+### reconcile-session.json
+
+Each resolver attempt writes
+`.tpatch/features/<slug>/reconciliation/reconcile-session.json`:
+
+```json
+{
+  "slug": "<slug>",
+  "timestamp": "2026-04-22T12:00:00Z",
+  "upstream_commit": "<sha>",
+  "shadow_path": ".tpatch/shadow/<slug>-<ts>/",
+  "files": [
+    { "path": "src/a.ts", "status": "resolved", "model": "gpt-4o-mini", "validation": "ok" },
+    { "path": "src/b.ts", "status": "failed",   "model": "gpt-4o-mini", "validation": "markers" }
+  ],
+  "verdict": "shadow-awaiting"
+}
+```
+
+This file is the source of truth for agents acting as the provider in
+Path B: read it, edit the shadow files directly (they live under
+`.tpatch/shadow/<slug>-<ts>/`), then run `tpatch reconcile --accept
+<slug>` to commit the resolution without re-invoking the LLM.
+
+### Accept flow (authoritative)
+
+`--accept` is not a simple copy. It does, atomically:
+
+1. Reads the original `artifacts/post-apply.patch` and extracts the set
+   of files touched by the feature.
+2. Applies non-conflicting hunks to the real tree with
+   `git apply --3way --exclude=<resolved-paths>` so unchanged upstream
+   regions land correctly.
+3. Copies the resolved files from the shadow worktree over the real
+   tree (overlay — these are the files that had conflicts).
+4. Regenerates `artifacts/post-apply.patch` as
+   `git diff <upstreamCommit> -- <touched files>` (new files are
+   intent-to-added first so they appear in the diff).
+5. Snapshots the resolution delta into
+   `patches/NNN-reconcile.patch` for audit.
+6. Marks feature state `applied` and prunes the shadow worktree.
+
+`apply-recipe.json` is NOT auto-regenerated — whole-diff to op-list is
+lossy. Re-run `tpatch implement` or `tpatch record` if the recipe
+matters to you.
+
+### Path B fallback
+
+If the provider is unavailable or returns `blocked-requires-human`, you
+can still use the shadow as a scratch space: edit
+`.tpatch/shadow/<slug>-<ts>/<path>` directly, update the file's status
+in `reconcile-session.json` to `"resolved"`, then `tpatch reconcile
+--accept <slug>`. The accept flow trusts the shadow contents; it does
+not re-validate that the provider wrote them.
+
+The manual git-stash playbook above is still fully supported and
+remains the fastest path when `--resolve` is not wanted or the
+conflict count exceeds `--max-conflicts`.

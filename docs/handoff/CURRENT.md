@@ -3,7 +3,7 @@
 ## Active Task
 
 - **Task ID**: M12 / Tranche B2 / v0.5.0 — Provider-Assisted Conflict Resolver
-- **Status**: In progress. **8 of 10 b2 todos done** (shadow + validation + resolver-core + reconcile-wiring + state-machine + cli-flags + derived-refresh + golden-tests). Next: `b2-skills-update` (now unblocked).
+- **Status**: In progress. **9 of 10 b2 todos done** (shadow + validation + resolver-core + reconcile-wiring + state-machine + cli-flags + derived-refresh + golden-tests + skills-update). Next: `b2-release` (v0.5.0 tag).
 - **PRD**: `docs/prds/PRD-provider-conflict-resolver.md`
 - **Milestone**: `docs/milestones/M12-provider-conflict-resolver.md`
 - **ADR**: `docs/adrs/ADR-010-provider-conflict-resolver.md`
@@ -29,8 +29,8 @@
 | `b2-cli-flags` | ✅ done | `c022b19` | `reconcileCmd` + 7 flags + accept/reject/shadow-diff handlers + `validateReconcileFlags` + 2 tests |
 | `b2-derived-refresh` | ✅ done | `1507b7a` | `FilesInPatch`/`ForwardApplyExcluding`/`DiffFromCommitForPaths` + `RefreshAfterAccept` + accept flow rewired + 4 tests |
 | `b2-golden-tests` | ✅ done | (this commit) | `golden_reconcile_test.go` — 5 ADR-010 acceptance scenarios (clean-reapply / shadow-awaiting / validation-failed / too-many-conflicts / no-provider) |
-| `b2-skills-update` | ⏭️ NEXT (unblocked) | — | 6 skills + `docs/agent-as-provider.md` — document `--resolve/--apply/--accept/--reject/--shadow-diff`, reconciling-shadow state, reconcile-session.json schema |
-| `b2-release` | blocked on skills+golden | — | v0.5.0 tag |
+| `b2-skills-update` | ✅ done | (this commit) | 6 skills + `docs/agent-as-provider.md` — Phase 3.5 section, `--resolve/--apply/--accept/--reject/--shadow-diff/--max-conflicts/--model` flags, `reconciling-shadow` state, `reconcile-session.json` schema, shadow worktree concept; parity guard green |
+| `b2-release` | ⏭️ NEXT (unblocked) | — | v0.5.0 tag: bump version, CHANGELOG entry, tag, push |
 
 SQL: `SELECT id, status FROM todos WHERE id LIKE 'b2-%' ORDER BY id;`
 

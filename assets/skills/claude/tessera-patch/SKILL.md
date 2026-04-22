@@ -155,9 +155,59 @@ The `implement` phase produces a deterministic recipe that the `apply` phase con
 - Operations are executed in the order they appear. Later ops may depend on earlier ops (e.g. `ensure-directory` before `write-file`).
 - There is no `delete-file` or `rename-file` op in the current schema. To delete a file, use Path B: `apply --mode started`, `git rm <path>`, `apply --mode done`, `record`. Richer ops are tracked in `feat-recipe-schema-expansion`.
 
+## Reconcile Phase 3.5 — Provider-assisted conflict resolution (v0.5.0)
+
+On 3-way conflict, `tpatch reconcile --resolve` asks the provider to merge each conflicted file inside a **shadow worktree** (`.tpatch/shadow/<slug>-<ts>/`). The real working tree is never touched until you accept. See `docs/adrs/ADR-010-provider-conflict-resolver.md` for the full decision table.
+
+### Flags
+
+- `--resolve` — enable phase 3.5 (off by default; no heuristic fallback — ADR-010 D9).
+- `--apply` — auto-accept when every file is `resolved`. Requires `--resolve`.
+- `--max-conflicts N` — abort before calling the provider if conflicts > N (default 3).
+- `--model <name>` — override the resolver model for this run.
+- `--accept <slug>` / `--reject <slug>` / `--shadow-diff <slug>` — terminal operations on a pending shadow session. Mutually exclusive; take `<slug>` as the flag value, not a positional arg.
+
+### Verdicts beyond v0.4.x
+
+| verdict | meaning |
+|---|---|
+| `shadow-awaiting` | All conflicted files resolved; shadow ready for `--accept`. Feature state: `reconciling-shadow`. |
+| `blocked-requires-human` | At least one file failed validation (still has `<<<<<<<` markers, corrupted output, or no provider configured). |
+| `blocked-too-many-conflicts` | Conflict count exceeded `--max-conflicts`; the provider was never called. |
+
+### reconcile-session.json
+
+Each resolver run writes `.tpatch/features/<slug>/reconciliation/reconcile-session.json`. Shape:
+
+```json
+{
+  "slug": "<slug>",
+  "timestamp": "2026-04-22T12:00:00Z",
+  "upstream_commit": "<sha>",
+  "shadow_path": ".tpatch/shadow/<slug>-<ts>/",
+  "files": [
+    { "path": "src/a.ts", "status": "resolved", "model": "gpt-4o-mini", "validation": "ok" },
+    { "path": "src/b.ts", "status": "failed",   "model": "gpt-4o-mini", "validation": "markers" }
+  ],
+  "verdict": "shadow-awaiting"
+}
+```
+
+Agents acting as the provider (Path B) can read this file, edit the shadow files directly, then run `tpatch reconcile --accept <slug>` to commit the resolution.
+
+### Accept flow (what `--accept` actually does)
+
+1. Apply non-conflicting hunks of `post-apply.patch` to the real tree via 3-way merge (excluding the resolved files).
+2. Copy the resolved files from the shadow worktree over the real tree.
+3. Regenerate `artifacts/post-apply.patch` as `git diff <upstreamCommit> -- <touched files>`.
+4. Snapshot the resolution delta as `patches/NNN-reconcile.patch` (audit trail).
+5. Mark state `applied`; prune the shadow worktree.
+
+`apply-recipe.json` is NOT auto-regenerated (lossy from a raw diff). Re-run `tpatch implement` or `tpatch record` if the recipe matters to you.
+
 ## If reconcile returns 3WayConflicts
 
-When `tpatch reconcile` cannot forward-apply cleanly, it returns verdict `3WayConflicts` and stashes the pre-reconcile tree. Automatic provider-assisted resolution is coming (see `docs/adrs/ADR-010-provider-conflict-resolver.md`). Until it ships, resolve by hand using this playbook.
+When `tpatch reconcile` cannot forward-apply cleanly, it returns verdict `3WayConflicts` and stashes the pre-reconcile tree. In v0.5.0 the fastest path is `tpatch reconcile --resolve` (see Phase 3.5 above). The manual playbook below remains the fallback when you prefer to resolve by hand or when phase 3.5 returns `blocked-requires-human`.
 
 1. **Never pop the stash.** The stash holds your pre-reconcile tree. Popping it destroys upstream's state.
 2. Restore only the tpatch metadata so you can see the feature's intent:
@@ -235,6 +285,8 @@ When they disagree — e.g. the recipe's `replace-in-file` can no longer find it
 requested → analyzed → defined → implementing → applied → active
                                                      ↓
                                                reconciling → active / upstream_merged / blocked
+                                                     ↓ (with --resolve)
+                                               reconciling-shadow → (accept) applied / (reject) active / blocked-requires-human
 ```
 
 ## Safety
