@@ -2,19 +2,45 @@
 
 ## Active Task
 
-- **Task ID**: M14 / Tranche D / v0.6.0 — Feature Dependencies / DAG (**scoping phase**)
-- **Status**: 🔨 PRD approved (`fa4bbb6`) — next: draft ADR-011 before any M14.1 code
-- **PRD**: `docs/prds/PRD-feature-dependencies.md` (736 lines, APPROVED WITH NOTES after 3 review cycles)
-- **Milestone**: `docs/milestones/M14-feature-dependencies.md` (to be created)
-- **Previous**: M13 / Tranche C1 / v0.5.1 shipped ✅ (archived in `HISTORY.md`)
+- **Task ID**: Tranche C2 / v0.5.2 — correctness fix pass (**IN FLIGHT**)
+- **Status**: 🔨 Implementation sub-agent dispatched (see `docs/supervisor/LOG.md` for verification trail)
+- **Blocks**: M14.1 — cannot start data model work until reconcile `--resolve --apply` is truthful and the `refresh.go` path no longer dirties the user's index (M14.3 extends both)
+- **Next on deck after C2**: ADR-011 ✅ done → M14.1 data model + validation
 
-### Next steps
+### C2 fix scope (7 items, verified real)
 
-1. ✅ ~~Draft `docs/adrs/ADR-011-feature-dependencies.md`~~ — done (9 decisions locked, terminology normalized per PRD §3.4 drift).
-2. Create `docs/milestones/M14-feature-dependencies.md` with the 4-sub-milestone contract.
-3. Begin M14.1 implementation (data model + validation).
+| ID | Severity | Finding |
+|---|---|---|
+| c2-resolve-apply-truthful | 🔴 Silent correctness bug | `--resolve --apply` sets `ReconcileReapplied` without copying shadow → real tree |
+| c2-refresh-index-clean | 🟡 UX bug | `DiffFromCommitForPaths` leaves `git add -N` intent-to-add entries in user's index |
+| c2-recipe-hash-provenance | 🟡 Guard incomplete | Stale guard catches HEAD drift but not recipe content drift |
+| c2-remove-piped-stdin | 🟡 Contract drift | `printf y\| tpatch remove` refuses despite shipped contract saying piped stdin skips confirm |
+| c2-amend-append-flag | 🟢 Feature add | Lock replace-default, add explicit `--append`, mutex with `--reset` |
+| c2-max-conflicts-drift | 🟢 Doc drift | 6 sites claim default 3; code is 10 (CHANGELOG, agent-as-provider, 4 shipped skill/prompt files) |
+| c2-release-v0.5.2 | supervisor | Tag after code-review sub-agent approves |
 
-### Tranche D scope (v0.6.0)
+### Why before M14.1
+
+1. Finding #1 is silent correctness on the v0.5.0 headline feature (`--resolve --apply`). Building DAG on top compounds the bug × N features in M14.3's Kahn traversal.
+2. M14.3 extends `refresh.go` (finding #2's code) — fix the temp-index leak once, inherit clean plumbing.
+3. The **shared accept-helper** extraction (finding #1's preferred fix) is the exact primitive M14.3's `blocked-by-parent-and-needs-resolution` compound verdict will need.
+4. Skills max-conflicts drift will be re-touched by M14.2/M14.4 parity-guard rollouts anyway — cleaner to fix drift before the DAG adds 3 new label strings to the same skill files.
+
+### Deferred decisions locked in PRD (for M14 reference)
+
+1. `depends_on` in `status.json` only (no new `feature.yaml`, no migration)
+2. DFS for cycle detection, Kahn's algorithm for operator traversal
+3. `waiting-on-parent` + `blocked-by-parent` are **composable derived labels** (not states)
+4. `created_by` recipe op gated by **hard deps only**
+5. `upstream_merged` satisfies hard deps
+6. Child's own reconcile verdict **always computed first**; parent labels overlay clean verdicts
+7. `remove --cascade` required to delete parents with dependents — `--force` alone does NOT bypass
+8. Parent-patch context **NOT** passed to M12 resolver in v0.6 (deferred to `feat-resolver-dag-context`)
+9. All gated by `features.dependencies` config flag until v0.6.0 atomic flip
+
+See `docs/adrs/ADR-011-feature-dependencies.md` for full rationale.
+
+### Tranche D scope (v0.6.0, after C2)
 
 | Milestone | Scope | Est. LOC |
 |---|---|---|
@@ -23,37 +49,20 @@
 | M14.3 | Reconcile topological traversal + composable labels + compound verdict | ~500 |
 | M14.4 | `status --dag` + skills + release v0.6.0 | ~300 |
 
-SQL: `SELECT id, status FROM todos WHERE id='adr-011-feature-dependencies' OR id LIKE 'm14.%' ORDER BY id;`
-
-### Decisions locked in PRD (to be codified in ADR-011)
-
-1. `depends_on` in `status.json` only (no new `feature.yaml`, no migration)
-2. DFS for cycle detection, Kahn's algorithm for operator traversal
-3. `waiting-on-parent` + `blocked-by-parent` are **composable derived labels** (not states) — both can coexist on one feature
-4. `created_by` recipe op gated by **hard deps only** (soft deps emit warnings, not errors)
-5. `upstream_merged` satisfies hard deps (parent can be gone if it landed upstream)
-6. Child's own reconcile verdict **always computed first**; parent labels overlay clean verdicts; intrinsic `blocked-*` never masked
-7. New compound verdict `blocked-by-parent-and-needs-resolution` for `3WayConflicts + blocked parent` case
-8. `remove --cascade` required to delete parents with dependents — `--force` alone does NOT bypass
-9. Parent-patch context **NOT** passed to M12 conflict resolver in v0.6 (deferred to `feat-resolver-dag-context`)
-
-### Follow-ups deferred from PRD (registered in SQL)
-
-- `feat-resolver-dag-context` — parent-patch to M12 resolver
-- `feat-feature-autorebase` — auto-rebase child on parent drift
-- `feat-amend-dependent-warning` — stale-parent-* labels (implemented alongside M14.2 but tracked separately)
-
 ### Registered follow-ups (not in any tranche yet)
 
+- `feat-ephemeral-mode` — one-shot add-feature mode with no tracking artifacts; depends on `feat-feature-import` + `feat-delivery-modes`
+- `feat-feature-reorder` — flip parent-child in DAG; depends on `feat-feature-dependencies`
+- `feat-resolver-dag-context` — parent-patch to M12 resolver
+- `feat-feature-autorebase` — auto-rebase child on parent drift
+- `feat-amend-dependent-warning` — stale-parent-* labels
 - `feat-skills-apply-auto-default` — 6 skills still reference `--mode prepare/execute/done`; v0.5.1 flip not documented
 - `bug-record-roundtrip-false-positive-markdown` — shipped `--lenient` fallback only; needs live repro for root-cause fix
 - `chore-gitignore-tpatch-binary` — trivial one-liner; bundle into next release
 
-## Session Summary — 2026-04-23 — PRD authoring for feat-feature-dependencies
+## Session Summary — 2026-04-23 — PRD approved, C2 fix pass opened
 
-Supervisor-driven sub-agent cycle: implementation sub-agent drafted PRD v1 (453 lines) → rubber-duck review surfaced 6 critical issues → v2 revision (697 lines) addressed all 6 but introduced 4 new contradictions → rubber-duck review flagged them → v3 revision (736 lines) fixed all 4 → final review **APPROVED WITH NOTES**. 3 full review cycles, 1 minor non-blocking cleanup note (terminology normalization deferred to ADR-011).
-
-PRD committed `fa4bbb6`. Supervisor log updated. ROADMAP M14 block populated. SQL: parent feat marked done; `adr-011-feature-dependencies` + `m14.1`-`m14.4` chain inserted with dependencies; 3 follow-ups registered.
+Supervisor-driven: after ADR-011 shipped, reviewer session surfaced 4 confirmed bugs + 2 doc drifts. Verified findings #1, #2, #6 via direct code inspection (resolver.go:218-222 comment is explicit; gitutil.go:689-697 leaks intent-to-add; 6 skill/doc sites claim max-conflicts default 3 against code's 10). Registered 7 C2 todos with dependencies; M14.1 blocked behind v0.5.2 release.
 
 ## Files Changed
 
