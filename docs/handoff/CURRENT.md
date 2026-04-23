@@ -10,8 +10,8 @@
 
 ### Next steps
 
-1. Draft `docs/adrs/ADR-011-feature-dependencies.md` locking the 8 architectural decisions from PRD §0.1.
-2. Create `docs/milestones/M14-feature-dependencies.md` with the 4-sub-milestone rollout.
+1. ✅ ~~Draft `docs/adrs/ADR-011-feature-dependencies.md`~~ — done (9 decisions locked, terminology normalized per PRD §3.4 drift).
+2. Create `docs/milestones/M14-feature-dependencies.md` with the 4-sub-milestone contract.
 3. Begin M14.1 implementation (data model + validation).
 
 ### Tranche D scope (v0.6.0)

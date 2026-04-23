@@ -5,6 +5,12 @@
 ## Index
 
 - [ADR-001: Add spf13/cobra as CLI Framework Dependency](ADR-001-cobra-dependency.md) — Accepted
+- [ADR-002: Provider Strategy](ADR-002-provider-strategy.md) — Accepted
+- [ADR-003: SDK Evaluation](ADR-003-sdk-evaluation.md) — Accepted
+- [ADR-004: M10 Copilot Proxy UX](ADR-004-m10-copilot-proxy-ux.md) — Accepted
+- [ADR-005: M11 Native Copilot Provider](ADR-005-m11-native-copilot-provider.md) — Accepted
+- [ADR-010: Provider-Assisted Conflict Resolver](ADR-010-provider-conflict-resolver.md) — Accepted
+- [ADR-011: Feature Dependency DAG](ADR-011-feature-dependencies.md) — Accepted
 
 ## Locked-In Decisions (from review process)
 
