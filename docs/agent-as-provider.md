@@ -217,7 +217,7 @@ the flag value, not a positional arg. They are mutually exclusive.
 |---|---|
 | `shadow-awaiting` | All conflicted files resolved; shadow ready for `--accept`. Feature state: `reconciling-shadow`. |
 | `blocked-requires-human` | At least one file failed validation (still contains `<<<<<<<`, corrupted content, or no provider configured). ADR-010 D9: there is no heuristic fallback. |
-| `blocked-too-many-conflicts` | Conflict count exceeded `--max-conflicts` (default 3); provider was never called. |
+| `blocked-too-many-conflicts` | Conflict count exceeded `--max-conflicts` (default 10); provider was never called. |
 
 ### reconcile-session.json
 

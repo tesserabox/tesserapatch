@@ -136,7 +136,7 @@ On 3-way conflict, `tpatch reconcile --resolve` asks the provider to merge each 
 Flags:
 - `--resolve` — enable phase 3.5 (off by default; no heuristic fallback — ADR-010 D9).
 - `--apply` — auto-accept when every file is `resolved`. Requires `--resolve`.
-- `--max-conflicts N` — abort before calling the provider if conflicts > N (default 3).
+- `--max-conflicts N` — abort before calling the provider if conflicts > N (default 10).
 - `--model <name>` — override resolver model.
 - `--accept <slug>` / `--reject <slug>` / `--shadow-diff <slug>` — terminal ops on a pending shadow session (mutually exclusive; slug is the flag value, not a positional arg).
 
