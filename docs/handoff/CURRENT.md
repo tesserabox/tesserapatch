@@ -2,10 +2,86 @@
 
 ## Active Task
 
-- **Task ID**: (idle — awaiting next tranche scope from supervisor)
-- **Status**: ✅ Idle — Tranche C1 / v0.5.1 **APPROVED, pushed, live on `origin/main`**
-- **Milestone**: (no active milestone — M13 closed)
-- **Previous**: M13 / Tranche C1 / v0.5.1 — archived in `HISTORY.md`; review verdict in `docs/supervisor/LOG.md`
+- **Task ID**: M14 / Tranche D / v0.6.0 — Feature Dependencies / DAG (**scoping phase**)
+- **Status**: 🔨 PRD approved (`fa4bbb6`) — next: draft ADR-011 before any M14.1 code
+- **PRD**: `docs/prds/PRD-feature-dependencies.md` (736 lines, APPROVED WITH NOTES after 3 review cycles)
+- **Milestone**: `docs/milestones/M14-feature-dependencies.md` (to be created)
+- **Previous**: M13 / Tranche C1 / v0.5.1 shipped ✅ (archived in `HISTORY.md`)
+
+### Next steps
+
+1. Draft `docs/adrs/ADR-011-feature-dependencies.md` locking the 8 architectural decisions from PRD §0.1.
+2. Create `docs/milestones/M14-feature-dependencies.md` with the 4-sub-milestone rollout.
+3. Begin M14.1 implementation (data model + validation).
+
+### Tranche D scope (v0.6.0)
+
+| Milestone | Scope | Est. LOC |
+|---|---|---|
+| M14.1 | Data model + validation (Dependency struct, cycle DFS, 5 rules) | ~300 |
+| M14.2 | Apply gate + `created_by` recipe op + 6-skill parity-guard rollout | ~250 |
+| M14.3 | Reconcile topological traversal + composable labels + compound verdict | ~500 |
+| M14.4 | `status --dag` + skills + release v0.6.0 | ~300 |
+
+SQL: `SELECT id, status FROM todos WHERE id='adr-011-feature-dependencies' OR id LIKE 'm14.%' ORDER BY id;`
+
+### Decisions locked in PRD (to be codified in ADR-011)
+
+1. `depends_on` in `status.json` only (no new `feature.yaml`, no migration)
+2. DFS for cycle detection, Kahn's algorithm for operator traversal
+3. `waiting-on-parent` + `blocked-by-parent` are **composable derived labels** (not states) — both can coexist on one feature
+4. `created_by` recipe op gated by **hard deps only** (soft deps emit warnings, not errors)
+5. `upstream_merged` satisfies hard deps (parent can be gone if it landed upstream)
+6. Child's own reconcile verdict **always computed first**; parent labels overlay clean verdicts; intrinsic `blocked-*` never masked
+7. New compound verdict `blocked-by-parent-and-needs-resolution` for `3WayConflicts + blocked parent` case
+8. `remove --cascade` required to delete parents with dependents — `--force` alone does NOT bypass
+9. Parent-patch context **NOT** passed to M12 conflict resolver in v0.6 (deferred to `feat-resolver-dag-context`)
+
+### Follow-ups deferred from PRD (registered in SQL)
+
+- `feat-resolver-dag-context` — parent-patch to M12 resolver
+- `feat-feature-autorebase` — auto-rebase child on parent drift
+- `feat-amend-dependent-warning` — stale-parent-* labels (implemented alongside M14.2 but tracked separately)
+
+### Registered follow-ups (not in any tranche yet)
+
+- `feat-skills-apply-auto-default` — 6 skills still reference `--mode prepare/execute/done`; v0.5.1 flip not documented
+- `bug-record-roundtrip-false-positive-markdown` — shipped `--lenient` fallback only; needs live repro for root-cause fix
+- `chore-gitignore-tpatch-binary` — trivial one-liner; bundle into next release
+
+## Session Summary — 2026-04-23 — PRD authoring for feat-feature-dependencies
+
+Supervisor-driven sub-agent cycle: implementation sub-agent drafted PRD v1 (453 lines) → rubber-duck review surfaced 6 critical issues → v2 revision (697 lines) addressed all 6 but introduced 4 new contradictions → rubber-duck review flagged them → v3 revision (736 lines) fixed all 4 → final review **APPROVED WITH NOTES**. 3 full review cycles, 1 minor non-blocking cleanup note (terminology normalization deferred to ADR-011).
+
+PRD committed `fa4bbb6`. Supervisor log updated. ROADMAP M14 block populated. SQL: parent feat marked done; `adr-011-feature-dependencies` + `m14.1`-`m14.4` chain inserted with dependencies; 3 follow-ups registered.
+
+## Files Changed
+
+- `docs/prds/PRD-feature-dependencies.md` — NEW — 736 lines
+- `docs/ROADMAP.md` — M14 section populated
+- `docs/supervisor/LOG.md` — PRD review cycle entry
+- `docs/handoff/CURRENT.md` — this file, flipped to M14 scoping state
+
+## Test Results
+
+N/A — docs-only session.
+
+## Next Steps
+
+1. Draft ADR-011 (can be done as a sub-agent task or directly by supervisor — small scope).
+2. Create `docs/milestones/M14-feature-dependencies.md` with the 4-sub-milestone contract.
+3. Launch M14.1 implementation sub-agent once ADR-011 is in place.
+
+## Blockers
+
+None. ADR-011 is the only gating artifact before M14.1 coding starts.
+
+## Context for Next Agent
+
+- PRD review had **3 passes** and every pass improved the artifact materially — this is the pattern for non-trivial features. Budget review cycles, don't treat first-pass approval as the norm.
+- Rubber-duck agent is highly effective at catching self-introduced contradictions in revisions. Always re-review after revisions.
+- `m14.1-data-model` must not start until ADR-011 is committed — it's a repo rule per AGENTS.md.
+- PRD has ONE non-blocking cleanup note: §3.4 still uses enum-style `ReconcileWaitingOnParent` / `ReconcileBlockedByParent` verdicts while §4.5 locks label semantics. ADR-011 should normalize (labels win).
 
 ### Post-release user testing
 

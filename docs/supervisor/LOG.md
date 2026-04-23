@@ -4,6 +4,43 @@
 
 ---
 
+## Review — PRD-feature-dependencies — 2026-04-23
+
+**Author**: dag-prd-author sub-agent (3 revision cycles)
+**Reviewer**: dag-prd-reviewer rubber-duck sub-agent (3 review passes)
+**Task**: Author PRD for stacked feature dependency DAG (v1 backlog item `feat-feature-dependencies`).
+
+### Review trajectory
+- **v1 → NEEDS REVISION**: 6 critical issues (semantic contradictions, state composition, dual-source footgun, parity-guard impact, amend/remove vagueness, missing ADR)
+- **v2 → NEEDS REVISION**: 5 of 6 resolved + 1 partial; 4 new internal contradictions introduced by the revisions themselves (composability vs exclusivity, drift precedence, `--orphan-soft` scope creep, JSON example bug)
+- **v3 → APPROVED WITH NOTES**: all 4 new contradictions resolved; 4 edge cases author self-flagged all accepted; 1 minor terminology drift (`ReconcileWaitingOnParent` enum vs label) deferred to ADR-011 cleanup
+
+### Verdict: **APPROVED WITH NOTES**
+
+### Deliverable
+`docs/prds/PRD-feature-dependencies.md` — 736 lines, commit `fa4bbb6`.
+
+### Decisions locked in the PRD (to be reiterated in ADR-011)
+1. `depends_on` lives in `status.json` only (no new `feature.yaml`, no migration)
+2. DFS for cycle detection
+3. Kahn's algorithm for operator-facing topo traversal
+4. `waiting-on-parent` / `blocked-by-parent` are composable derived labels (not states)
+5. Soft deps do NOT gate `created_by`; hard deps DO
+6. `upstream_merged` satisfies hard dependencies
+7. `remove --cascade` required to delete parents with dependents (`--force` alone does NOT bypass dep integrity)
+8. Parent-patch context NOT passed to M12 resolver in v0.6 (deferred to `feat-resolver-dag-context`)
+
+### Follow-up tranche scope (Tranche D / v0.6.0, 4 milestones)
+- M14.1 data model + validation (~300 LOC) — blocked by ADR-011
+- M14.2 apply gate + `created_by` + parity-guard rollout (~250 LOC)
+- M14.3 reconcile topological traversal + compound verdicts (~500 LOC, bumped)
+- M14.4 `status --dag` + skills + release v0.6.0 (~300 LOC, bumped)
+
+### Action Taken
+Committed PRD (`fa4bbb6`). SQL todos inserted: `adr-011-feature-dependencies` (blocker), `m14.1` → `m14.4` chain with dependencies. Three follow-ups registered: `feat-resolver-dag-context`, `feat-feature-autorebase`, `feat-amend-dependent-warning`. Parent todo `feat-feature-dependencies` flipped to `done`. ROADMAP M14 block still needs to be populated by supervisor (next step).
+
+---
+
 ## Review — M13 / Tranche C1 / v0.5.1 — 2026-04-22
 
 **Reviewer**: c1-reviewer (code-review sub-agent)

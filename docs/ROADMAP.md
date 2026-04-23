@@ -149,7 +149,25 @@ See `docs/milestones/M9-interactive-harness.md` for task list.
 
 **Scope**: Inline — no separate milestone file for polish tranches.
 
-## M14+ — Future
+## M14 — Feature Dependencies / DAG (Tranche D, v0.6.0) 🔨
+
+**Goal**: Stacked / dependent features with hard vs soft semantics, topological reconcile, composable derived labels (`waiting-on-parent` + `blocked-by-parent`), cascade-remove, and amend-invalidation tracking.
+
+**PRD**: `docs/prds/PRD-feature-dependencies.md` (commit `fa4bbb6`) — APPROVED WITH NOTES after 3 review cycles.
+
+**ADR**: `docs/adrs/ADR-011-feature-dependencies.md` — **REQUIRED before M14.1 coding starts**. Locks 8 architectural decisions (storage in status.json, DFS cycle detection, Kahn traversal, labels-not-states, created_by hard-only, upstream_merged satisfies deps, cascade on remove, no parent-patch injection to M12 resolver in v0.6).
+
+**Gated by**: `features.dependencies: true` config flag (default false) until M14.4 lands. Single atomic v0.6.0 flip — no half-shipped intermediate releases.
+
+**Scope (4 sub-milestones, ~1350 LOC total)**:
+- **M14.1** — data model + validation (~300 LOC). Dependency struct, cycle DFS, 5 validation rules.
+- **M14.2** — apply gate + `created_by` recipe op + 6-skill parity-guard rollout (~250 LOC). Coordinated atomic change to recipe schema + all 6 skill formats + `docs/agent-as-provider.md`.
+- **M14.3** — reconcile topological traversal + composable labels + compound verdict (~500 LOC). Kahn planner, label composition matrix, `blocked-by-parent-and-needs-resolution` compound verdict, M12 interaction.
+- **M14.4** — `status --dag`, skills analyze-phase bullet, `docs/dependencies.md`, tag v0.6.0 (~300 LOC).
+
+**Out of scope** (v0.6.x follow-ups): auto-rebase on parent drift (`feat-feature-autorebase`), parent-patch context for resolver (`feat-resolver-dag-context`), per-dep version ranges (`feat-patch-compatibility`), stacked-PR delivery (`feat-delivery-modes`).
+
+## M15+ — Future
 
 - Cost tracking and token budgeting
 - Multi-repo orchestration
