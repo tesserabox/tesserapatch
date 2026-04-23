@@ -999,22 +999,10 @@ func validateReconcileFlags(accept, reject, shadowDiff string, resolve, apply bo
 	return nil
 }
 
-// runReconcileAccept applies the feature's non-conflicted hunks to the
-// real tree, copies the resolved conflicted files from the shadow
-// worktree on top, regenerates derived artifacts, and transitions the
-// feature state to `applied`. Refuses if the feature is not in
-// `reconciling-shadow` state.
-//
-// Order of operations matters for correctness:
-//  1. Read post-apply.patch (needed to know which files are involved
-//     and to re-apply non-conflicted hunks).
-//  2. `git apply --3way --exclude=<resolved>` on post-apply.patch so
-//     non-conflicted hunks land cleanly while resolved paths are left
-//     for step 3.
-//  3. CopyShadowToReal to overwrite resolved paths with shadow content.
-//  4. RefreshAfterAccept regenerates post-apply.patch + numbered
-//     patches/NNN-reconcile.patch.
-//  5. MarkFeatureState → applied; prune shadow; clear status pointer.
+// runReconcileAccept delegates to workflow.AcceptShadow for the actual
+// shadow → real-tree transition. See that function's package doc for
+// the sequence (steps 1-5). This wrapper just validates CLI state,
+// loads the resolved-files list, and forwards warnings to stderr.
 func runReconcileAccept(cmd *cobra.Command, s *store.Store, slug string) error {
 	st, err := s.LoadFeatureStatus(slug)
 	if err != nil {
@@ -1033,56 +1021,18 @@ func runReconcileAccept(cmd *cobra.Command, s *store.Store, slug string) error {
 		return fmt.Errorf("reconcile --accept: no resolved files recorded for %q (reconcile-session.json missing or empty)", slug)
 	}
 
-	// Pull the original post-apply.patch before we touch anything so
-	// step 4 can restrict the regenerated diff to the same paths.
-	originalPatch, err := s.ReadFeatureFile(slug, "artifacts/post-apply.patch")
+	res, err := workflow.AcceptShadow(s, slug, files, st.Reconcile.UpstreamCommit, workflow.AcceptOptions{
+		Phase:            "reconcile --accept",
+		ResolveSessionID: st.Reconcile.ResolveSession,
+	})
 	if err != nil {
-		return fmt.Errorf("reconcile --accept: read post-apply.patch: %w", err)
+		return fmt.Errorf("reconcile --accept: %w", err)
+	}
+	if res.RefreshWarning != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: reconcile --accept: %s\n", res.RefreshWarning)
 	}
 
-	// Step 2: apply non-conflicted hunks. Resolved paths are excluded
-	// so git never produces conflict markers for them.
-	if originalPatch != "" {
-		if err := gitutil.ForwardApplyExcluding(s.Root, originalPatch, files); err != nil {
-			return fmt.Errorf("reconcile --accept: apply non-conflicted hunks: %w", err)
-		}
-	}
-
-	// Step 3: overlay resolved content.
-	if err := gitutil.CopyShadowToReal(s.Root, slug, files); err != nil {
-		return fmt.Errorf("reconcile --accept: copy shadow → real: %w", err)
-	}
-
-	// Step 4: refresh derived artifacts. Non-fatal — staleness here
-	// does not corrupt the working tree; users can rerun `tpatch record`.
-	if st.Reconcile.UpstreamCommit != "" {
-		if rerr := workflow.RefreshAfterAccept(s, slug, st.Reconcile.UpstreamCommit, originalPatch); rerr != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: reconcile --accept: derived-artifact refresh failed: %v\n", rerr)
-			fmt.Fprintln(cmd.ErrOrStderr(), "  (accepted files are on disk; run `tpatch record` to refresh manually)")
-		}
-	} else {
-		fmt.Fprintln(cmd.ErrOrStderr(), "warning: reconcile --accept: no upstream commit recorded; skipping derived-artifact refresh")
-		fmt.Fprintln(cmd.ErrOrStderr(), "  (run `tpatch record` to refresh manually)")
-	}
-
-	notes := fmt.Sprintf("reconcile --accept: %d file(s) accepted from shadow; derived artifacts refreshed", len(files))
-	if err := s.MarkFeatureState(slug, store.StateApplied, "reconcile --accept", notes); err != nil {
-		return fmt.Errorf("reconcile --accept: mark state: %w", err)
-	}
-
-	// Prune the shadow after a successful accept so the audit trail
-	// ends cleanly. The session JSON stays as the historical record.
-	if err := gitutil.PruneShadow(s.Root, slug); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: reconcile --accept: prune shadow: %v\n", err)
-	}
-
-	// Clear the shadow pointer from status.json; session id stays as
-	// the audit record.
-	if freshErr := clearShadowPointer(s, slug); freshErr != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: reconcile --accept: clear shadow pointer: %v\n", freshErr)
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Accepted %d file(s) for %s; state → applied\n", len(files), slug)
+	fmt.Fprintf(cmd.OutOrStdout(), "Accepted %d file(s) for %s; state → applied\n", len(res.AcceptedFiles), slug)
 	return nil
 }
 

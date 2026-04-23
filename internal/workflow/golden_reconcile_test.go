@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tesseracode/tesserapatch/internal/provider"
@@ -251,5 +252,77 @@ func TestGoldenReconcile_NoProviderBlocks(t *testing.T) {
 	}
 	if r.ShadowPath != "" {
 		t.Errorf("no-provider path should not create a shadow; got %q", r.ShadowPath)
+	}
+}
+
+// TestGoldenReconcile_ResolveApplyTruthful — v0.5.2 C2 finding #1.
+// Scenario 6: --resolve --apply with a provider that returns a clean
+// merged file. Expected end-state:
+//   - Outcome = ReconcileReapplied
+//   - real working tree contains the merged content (NOT the pre-patch
+//     upstream content, NOT the local feature content, NOT conflict
+//     markers)
+//   - shadow worktree is pruned
+//   - feature state = applied
+//
+// Before v0.5.2 this path set ReconcileReapplied without actually
+// copying shadow → real tree, so the real working tree kept the
+// upstream content and the "truthful" claim was silently wrong.
+func TestGoldenReconcile_ResolveApplyTruthful(t *testing.T) {
+	s, slug := buildConflictFixture(t)
+
+	cfg := provider.Config{Type: "openai-compatible", BaseURL: "http://x", Model: "m", AuthEnv: "X"}
+	// Clean merged resolution for the one conflicted file (shared.txt).
+	// `unclear` response for the phase-3 semantic probe so we progress
+	// into phase 3.5.
+	prov := &scriptedProvider{
+		responses: []string{`{"verdict":"unclear"}`},
+		keyed:     map[string]string{"shared.txt": "a\nB-merged\nc\n"},
+	}
+
+	results, err := RunReconcile(context.Background(), s, []string{slug}, "HEAD", prov, cfg,
+		ReconcileOptions{Resolve: true, Apply: true})
+	if err != nil {
+		t.Fatalf("RunReconcile: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results)=%d, want 1", len(results))
+	}
+	r := results[0]
+	if r.Outcome != store.ReconcileReapplied {
+		t.Fatalf("Outcome = %s, want reapplied (phase=%s notes=%v)", r.Outcome, r.Phase, r.Notes)
+	}
+
+	// Real working tree must contain the MERGED content — the truthful
+	// bit. The pre-v0.5.2 bug would have left upstream's "B-upstream"
+	// on disk here because shadow → real copy was skipped.
+	got, err := os.ReadFile(filepath.Join(s.Root, "shared.txt"))
+	if err != nil {
+		t.Fatalf("read shared.txt: %v", err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "B-merged") {
+		t.Errorf("shared.txt missing merged content; got %q (pre-v0.5.2 bug leaves B-upstream here)", gotStr)
+	}
+	if strings.Contains(gotStr, "B-upstream") || strings.Contains(gotStr, "B-local") {
+		t.Errorf("shared.txt contains pre-merge content; got %q", gotStr)
+	}
+	if strings.Contains(gotStr, "<<<<<<<") || strings.Contains(gotStr, ">>>>>>>") {
+		t.Errorf("shared.txt contains conflict markers; got %q", gotStr)
+	}
+
+	// Feature state must be applied.
+	st, _ := s.LoadFeatureStatus(slug)
+	if st.State != store.StateApplied {
+		t.Errorf("feature state = %s, want applied", st.State)
+	}
+
+	// Shadow pointer cleared from status.json (the resolver session id
+	// is preserved as an audit record).
+	if st.Reconcile.ShadowPath != "" {
+		t.Errorf("Reconcile.ShadowPath = %q, want empty after auto-apply", st.Reconcile.ShadowPath)
+	}
+	if st.Reconcile.ResolveSession == "" {
+		t.Errorf("Reconcile.ResolveSession should be preserved; got empty")
 	}
 }

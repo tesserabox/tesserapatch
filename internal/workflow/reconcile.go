@@ -683,9 +683,41 @@ func tryPhase35(
 
 	switch rr.Verdict {
 	case ResolveVerdictAutoAccepted:
+		// v0.5.2 fix (C2 finding #1): the resolver's "AutoAccepted"
+		// verdict only means every file passed validation and the
+		// caller has consented to auto-apply — the files are still
+		// sitting in the shadow worktree. Previously this path set
+		// ReconcileReapplied without any file copy. Now we call the
+		// shared accept helper BEFORE claiming success; if any step
+		// fails the shadow is preserved and the outcome flips to
+		// BlockedRequiresHuman with diagnostics.
+		acceptOpts := AcceptOptions{
+			Phase:            "reconcile --resolve --apply",
+			ResolveSessionID: rr.SessionID,
+		}
+		acceptRes, aerr := AcceptShadow(s, slug, result.ResolvedFiles, upstreamCommit, acceptOpts)
+		if aerr != nil {
+			// Preserve shadow for manual follow-up. Do NOT prune.
+			result.Outcome = store.ReconcileBlockedRequiresHuman
+			result.Notes = append(result.Notes,
+				fmt.Sprintf("phase 3.5 resolved %d file(s) but auto-apply failed mid-flight: %v; shadow preserved for manual review (`tpatch reconcile --accept %s` or `--reject %s`)",
+					len(result.ResolvedFiles), aerr, slug, slug))
+			return result
+		}
 		result.Outcome = store.ReconcileReapplied
 		result.Notes = append(result.Notes,
-			fmt.Sprintf("phase 3.5 auto-accepted %d file(s) (validation + test_command passed)", len(result.ResolvedFiles)))
+			fmt.Sprintf("phase 3.5 auto-accepted %d file(s) (validation + test_command passed); copied onto real tree: %s",
+				len(result.ResolvedFiles), strings.Join(acceptRes.AcceptedFiles, ", ")))
+		if acceptRes.RefreshWarning != "" {
+			result.Notes = append(result.Notes, "auto-apply warning: "+acceptRes.RefreshWarning)
+		}
+		// AcceptShadow already called MarkFeatureState(applied);
+		// clear the phase-3.5 bookkeeping from result so the outer
+		// updateFeatureState does not rewrite the state to a stale
+		// shadow pointer. Callers still see ShadowPath/ResolveSession
+		// via the ReconcileResult for logging; the on-disk status
+		// has been updated correctly by the helper.
+		result.ShadowPath = ""
 		return result
 	case ResolveVerdictShadowAwaiting:
 		result.Outcome = store.ReconcileShadowAwaiting
