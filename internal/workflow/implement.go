@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,13 +15,21 @@ import (
 )
 
 // RecipeProvenance is the sidecar written alongside apply-recipe.json
-// recording the commit the recipe was generated against. The apply
-// --mode execute path reads it to warn on stale recipes. Kept as a
-// sidecar (not a field on ApplyRecipe) so the skill-parity guard's
-// DisallowUnknownFields check does not require updates to 6 skills.
+// recording the commit the recipe was generated against and the sha256
+// of the recipe bytes at generation time. The apply path reads it to
+// warn both when HEAD has drifted (base_commit mismatch) and when the
+// recipe file has been edited out-of-band (recipe_sha256 mismatch).
+// Kept as a sidecar (not a field on ApplyRecipe) so the skill-parity
+// guard's DisallowUnknownFields check does not require updates to 6
+// skills.
+//
+// RecipeSHA256 uses a pointer so older sidecars (pre-v0.5.2) that
+// omit the field decode as nil and the content-drift check is simply
+// skipped — the HEAD check still runs.
 type RecipeProvenance struct {
-	BaseCommit  string `json:"base_commit"`
-	GeneratedAt string `json:"generated_at"`
+	BaseCommit   string  `json:"base_commit"`
+	GeneratedAt  string  `json:"generated_at"`
+	RecipeSHA256 *string `json:"recipe_sha256,omitempty"`
 }
 
 // WarnWriter receives non-fatal warnings emitted by workflow phases (e.g.
@@ -117,15 +126,27 @@ Output ONLY valid JSON: {"feature": "<slug>", "operations": [...]}`
 		}
 	}
 
-	// Write provenance sidecar so `apply --mode execute` can warn when
-	// the working tree has drifted from the commit this recipe was
-	// generated against. Best-effort: if HEAD is unreadable (e.g. the
-	// caller is not inside a git repo), skip the sidecar — the guard
-	// is backward-compatible with its absence.
+	// Write provenance sidecar so `apply` can warn when HEAD has
+	// drifted from the commit this recipe was generated against OR
+	// when the recipe bytes themselves have been edited out-of-band.
+	// Best-effort: if HEAD is unreadable (e.g. the caller is not
+	// inside a git repo), skip the sidecar — the guard is
+	// backward-compatible with its absence.
 	if commit, err := gitutil.HeadCommit(s.Root); err == nil && commit != "" {
+		// Re-read the recipe from disk so the hash matches exactly
+		// what future apply invocations will hash. Writing and then
+		// reading is deliberately serialised; we avoid hashing the
+		// in-memory buffer because trailing-newline normalisation in
+		// WriteArtifact would make the two diverge.
+		recipeBytes, rerr := s.ReadFeatureFile(slug, "artifacts/apply-recipe.json")
 		prov := RecipeProvenance{
 			BaseCommit:  commit,
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		if rerr == nil {
+			sum := sha256.Sum256([]byte(recipeBytes))
+			hex := fmt.Sprintf("%x", sum[:])
+			prov.RecipeSHA256 = &hex
 		}
 		data, _ := json.MarshalIndent(prov, "", "  ")
 		_ = s.WriteArtifact(slug, "recipe-provenance.json", string(data)+"\n")

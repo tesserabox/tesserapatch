@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -263,13 +265,41 @@ func writeRecipeAndProvenance(t *testing.T, tmpDir, slug, baseCommit string) {
   ]
 }
 `
-	if err := os.WriteFile(filepath.Join(artDir, "apply-recipe.json"), []byte(recipe), 0o644); err != nil {
+	recipePath := filepath.Join(artDir, "apply-recipe.json")
+	if err := os.WriteFile(recipePath, []byte(recipe), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if baseCommit == "" {
 		return
 	}
-	prov := `{"base_commit":"` + baseCommit + `","generated_at":"2026-04-22T00:00:00Z"}` + "\n"
+	sum := sha256.Sum256([]byte(recipe))
+	hashHex := fmt.Sprintf("%x", sum[:])
+	prov := fmt.Sprintf(`{"base_commit":%q,"generated_at":"2026-04-22T00:00:00Z","recipe_sha256":%q}`+"\n",
+		baseCommit, hashHex)
+	if err := os.WriteFile(filepath.Join(artDir, "recipe-provenance.json"), []byte(prov), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeLegacyRecipeAndProvenance writes a pre-v0.5.2 sidecar WITHOUT
+// the recipe_sha256 field to verify backward compatibility.
+func writeLegacyRecipeAndProvenance(t *testing.T, tmpDir, slug, baseCommit string) {
+	t.Helper()
+	artDir := filepath.Join(tmpDir, ".tpatch", "features", slug, "artifacts")
+	if err := os.MkdirAll(artDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recipe := `{
+  "feature": "` + slug + `",
+  "operations": [
+    {"type": "ensure-directory", "path": "src/"}
+  ]
+}
+`
+	if err := os.WriteFile(filepath.Join(artDir, "apply-recipe.json"), []byte(recipe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prov := fmt.Sprintf(`{"base_commit":%q,"generated_at":"2026-04-22T00:00:00Z"}`+"\n", baseCommit)
 	if err := os.WriteFile(filepath.Join(artDir, "recipe-provenance.json"), []byte(prov), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -327,6 +357,55 @@ func TestApplyExecuteRecipeStaleGuard(t *testing.T) {
 		}
 		if strings.Contains(stderr, "recipe was generated at commit") {
 			t.Fatalf("did not expect stale-recipe warning when sidecar absent, got %q", stderr)
+		}
+	})
+
+	// v0.5.2 finding #3: the stale-recipe guard used to detect only HEAD
+	// drift. This subtest mutates apply-recipe.json bytes WITHOUT touching
+	// HEAD and expects a content-drift warning.
+	t.Run("content-drift-warning", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		gitInitTestRepo(t, tmpDir)
+		runCmd("init", "--path", tmpDir)
+		runCmd("add", "--path", tmpDir, "Test feature drift d")
+		slug := "test-feature-drift-d"
+		writeRecipeAndProvenance(t, tmpDir, slug, gitHead(t, tmpDir))
+
+		// Mutate the recipe bytes post-provenance.
+		recipePath := filepath.Join(tmpDir, ".tpatch", "features", slug, "artifacts", "apply-recipe.json")
+		if err := os.WriteFile(recipePath, []byte(`{"feature":"`+slug+`","operations":[{"type":"ensure-directory","path":"src/tampered/"}]}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, stderr, code := runCmd("apply", "--path", tmpDir, slug, "--mode", "execute")
+		if code != 0 {
+			t.Fatalf("apply execute failed: %s", stderr)
+		}
+		if !strings.Contains(stderr, "apply-recipe.json has been edited") {
+			t.Fatalf("expected content-drift warning, got %q", stderr)
+		}
+	})
+
+	// Backward compatibility: a legacy sidecar without recipe_sha256
+	// must NOT fail the apply. A one-line note is emitted explaining
+	// the content-drift check was skipped. HEAD check still runs.
+	t.Run("legacy-sidecar-skips-hash-check", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		gitInitTestRepo(t, tmpDir)
+		runCmd("init", "--path", tmpDir)
+		runCmd("add", "--path", tmpDir, "Test feature legacy e")
+		slug := "test-feature-legacy-e"
+		writeLegacyRecipeAndProvenance(t, tmpDir, slug, gitHead(t, tmpDir))
+
+		_, stderr, code := runCmd("apply", "--path", tmpDir, slug, "--mode", "execute")
+		if code != 0 {
+			t.Fatalf("apply execute with legacy sidecar failed: %s", stderr)
+		}
+		if !strings.Contains(stderr, "predates recipe-hash guard") {
+			t.Fatalf("expected predates-note on legacy sidecar, got %q", stderr)
+		}
+		if strings.Contains(stderr, "apply-recipe.json has been edited") {
+			t.Fatalf("did not expect content-drift warning on legacy sidecar, got %q", stderr)
 		}
 	})
 }

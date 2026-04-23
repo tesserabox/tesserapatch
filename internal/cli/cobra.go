@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -639,9 +640,14 @@ func runApplyAuto(cmd *cobra.Command, s *store.Store, slug string) error {
 }
 
 // warnRecipeStale prints a stderr warning when the recipe-provenance
-// sidecar indicates the recipe was generated at a commit different
-// from current HEAD. No-op when the sidecar is missing (old recipes)
-// or HEAD is unreadable — this keeps the guard backward-compatible.
+// sidecar indicates EITHER the recipe was generated against a commit
+// different from current HEAD OR the apply-recipe.json bytes have
+// been edited since generation (content drift).
+//
+// No-op when the sidecar is missing (pre-provenance recipes) — this
+// keeps the guard backward-compatible. The recipe_sha256 field is a
+// pointer so older sidecars that predate the content-drift guard
+// decode as nil and the hash check is silently skipped (with a note).
 func warnRecipeStale(w io.Writer, s *store.Store, slug string) {
 	raw, err := s.ReadFeatureFile(slug, filepath.Join("artifacts", "recipe-provenance.json"))
 	if err != nil || strings.TrimSpace(raw) == "" {
@@ -651,18 +657,36 @@ func warnRecipeStale(w io.Writer, s *store.Store, slug string) {
 	if err := json.Unmarshal([]byte(raw), &prov); err != nil || prov.BaseCommit == "" {
 		return
 	}
-	head, err := gitutil.HeadCommit(s.Root)
-	if err != nil || head == "" || head == prov.BaseCommit {
-		return
-	}
 	short := func(sha string) string {
 		if len(sha) > 7 {
 			return sha[:7]
 		}
 		return sha
 	}
-	fmt.Fprintf(w, "warning: recipe was generated at commit %s but HEAD is now %s — results may differ\n",
-		short(prov.BaseCommit), short(head))
+
+	head, herr := gitutil.HeadCommit(s.Root)
+	if herr == nil && head != "" && head != prov.BaseCommit {
+		fmt.Fprintf(w, "warning: recipe was generated at commit %s but HEAD is now %s — results may differ\n",
+			short(prov.BaseCommit), short(head))
+	}
+
+	// Content-drift check. Older sidecars without the field land
+	// here with RecipeSHA256 == nil; emit a one-line note so the
+	// user understands why the hash guard was silent, then return.
+	if prov.RecipeSHA256 == nil {
+		fmt.Fprintln(w, "note: recipe provenance predates recipe-hash guard (content-drift check skipped)")
+		return
+	}
+	recipeBytes, rerr := s.ReadFeatureFile(slug, filepath.Join("artifacts", "apply-recipe.json"))
+	if rerr != nil {
+		return
+	}
+	sum := sha256.Sum256([]byte(recipeBytes))
+	current := fmt.Sprintf("%x", sum[:])
+	if current != *prov.RecipeSHA256 {
+		fmt.Fprintf(w, "warning: apply-recipe.json has been edited since it was generated (hash %s → %s) — results may differ\n",
+			short(*prov.RecipeSHA256), short(current))
+	}
 }
 
 // ─── record ──────────────────────────────────────────────────────────────────
