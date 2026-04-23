@@ -2,14 +2,24 @@
 
 ## Active Task
 
-- **Task ID**: (awaiting next tranche scope from supervisor)
-- **Status**: Idle — Tranche C1 / v0.5.1 delivered, pending supervisor review
-- **Milestone**: (inline — no separate milestone file for polish tranches)
-- **Previous**: M13 / Tranche C1 / v0.5.1 — archived in `HISTORY.md`
+- **Task ID**: (idle — awaiting next tranche scope from supervisor)
+- **Status**: ✅ Idle — Tranche C1 / v0.5.1 **APPROVED, pushed, live on `origin/main`**
+- **Milestone**: (no active milestone — M13 closed)
+- **Previous**: M13 / Tranche C1 / v0.5.1 — archived in `HISTORY.md`; review verdict in `docs/supervisor/LOG.md`
+
+### Post-release user testing
+
+User did manual testing after release — no bugs reported. Removed the stray `tpatch` build artifact from repo root manually.
+
+### Registered follow-ups (not in any tranche yet)
+
+- **Skill-asset refresh for apply default flip** — all 6 skill formats + `docs/agent-as-provider.md` still reference `apply --mode prepare/execute/done` explicitly. New `--mode auto` default is not documented there. Low-priority polish; cluster with next skill touch.
+- **`bug-record-roundtrip-false-positive-markdown`** — shipped `--lenient` fallback only. Real repro needed to root-cause. Re-open if a user reports live.
+- **`.gitignore /tpatch`** — bare binary at repo root from `go build ./cmd/tpatch` is not gitignored. Trivial one-line fix bundled into next tranche.
 
 ## Session Summary — 2026-04-22 — Tranche C1 / v0.5.1 shipped
 
-9 commits on `main` (not pushed — supervisor pushes after review). All tests green after every commit. No new Go deps.
+10 commits on `main`, pushed to `origin`. Tag `v0.5.1` pushed. All tests green. No new Go deps.
 
 | # | Item | Commit |
 |---|---|---|
@@ -21,7 +31,8 @@
 | 6 | c1-feature-amend | `36587c9` |
 | 7 | c1-feature-removal | `958e6d0` |
 | 8 | c1-record-lenient | `5dae00b` |
-| 9 | release(v0.5.1) | (this commit) + tag `v0.5.1` |
+| 9 | release(v0.5.1) | `e069cd8` + tag `v0.5.1` |
+| 10 | supervisor log: C1 review — APPROVED | `c4cccb3` |
 
 ### Breaking UX
 
@@ -56,9 +67,9 @@
 
 ## Next Steps
 
-1. Supervisor review of the 9 C1 commits.
-2. If approved: push `main` and tag `v0.5.1`.
-3. Pick next tranche from ROADMAP (M14+ candidates: cost tracking, feature DAG, recipe schema expansion, parallel workflows).
+1. ✅ Supervisor review of C1 commits — APPROVED (see `docs/supervisor/LOG.md`).
+2. ✅ Pushed `main` + tag `v0.5.1` to `origin`.
+3. ⏭️ Pick next tranche from ROADMAP M14+ backlog (see supervisor proposal in latest chat turn).
 
 ## Blockers
 
