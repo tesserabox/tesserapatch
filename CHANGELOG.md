@@ -2,6 +2,32 @@
 
 All notable changes to tpatch are recorded here.
 
+## v0.5.2 — Correctness Fix Pass (Tranche C2)
+
+Six confirmed findings from the v0.4.3..v0.5.1 delta review. One silent correctness bug on the v0.5.0 headline feature (`reconcile --resolve --apply`), one index-dirt bug, one stale-guard gap, one contract-drift bug, one feature addition, one doc drift. 8 regression tests added. No new Go dependencies.
+
+### Fixed
+
+- **c2-resolve-apply-truthful** (silent correctness bug) — `reconcile --resolve --apply` could set `ReconcileReapplied` without ever copying the shadow worktree into the real tree. Root cause: `ResolveVerdictAutoAccepted` was mapped directly to `Reapplied` by the caller, while the actual copy logic lived only in the manual `--accept` CLI path. Fix: new shared helper `workflow.AcceptShadow` owns the full accept sequence (forward-apply non-conflicting hunks → copy shadow → real via `ensureSafeRepoPath` → refresh artifacts → mark state → prune shadow). Both the manual `--accept` path and the auto-apply path route through it. On mid-flight failure the shadow is preserved and outcome maps to `ReconcileBlockedRequiresHuman` with instructions (per ADR-010 D4). Regression guards: `TestAcceptShadowCopiesResolvedContentToRealTree`, `TestAcceptShadowErrorsWithoutShadow`, `TestGoldenReconcile_ResolveApplyTruthful`.
+- **c2-refresh-index-clean** — `DiffFromCommitForPaths` used `git add -N` (intent-to-add) to surface untracked files in diffs but never cleaned up, leaving intent-to-add entries in the user's real git index after reconcile/refresh. Fix: run the diff against a throwaway index via `GIT_INDEX_FILE` (temp file, deferred unlink, seeded from the real index). Regression guard: `TestRefreshAfterAcceptLeavesIndexClean` (byte-compares `git status --porcelain` before/after + checks `git ls-files --stage` for intent-to-add marker).
+- **c2-recipe-hash-provenance** — Recipe stale guard only detected HEAD drift, not content drift. Modifying `apply-recipe.json` bytes without a new commit went unnoticed. Fix: provenance sidecar now records `recipe_sha256` at generation; `apply --mode execute` warns if either HEAD or hash differs from stored. Backward compatible with legacy sidecars (missing hash field) — emits "predates recipe-hash guard" note, does not error. Regression guards: `content-drift-warning` and `legacy-sidecar-skips-hash-check` subtests of `TestApplyExecuteRecipeStaleGuard`.
+- **c2-remove-piped-stdin** — `printf 'y\n' \| tpatch remove <slug>` refused with "non-TTY" even though the v0.5.1 contract said piped stdin auto-confirms. Fix: TTY check inverted — non-TTY now auto-yes (matches shipped contract); interactive TTY still prompts `[y/N]`; `--force` always skips. Regression guard: `TestRemovePipedStdinSkipsConfirmation` (uses `os.Pipe()`, not a fake reader).
+
+### Added
+
+- **c2-amend-append-flag** — New `tpatch amend --append <slug>` flag for append semantics; replace stays the default (per supervisor decision). `--append` and `--reset` are mutually exclusive (rejected with clear error). Tests: `TestAmendAppendConcatenates`, `TestAmendAppendAndResetRejected`. Structured section-aware append left for a future enhancement.
+
+### Docs
+
+- **c2-max-conflicts-drift** — 8 doc/skill sites claimed `--max-conflicts` default was 3; runtime (`DefaultMaxConflicts = 10`) was correct. Fixed all 8 (CHANGELOG, `docs/agent-as-provider.md`, and 6 shipped skill/prompt/workflow formats). Parity guard passes.
+
+### Notes
+
+- Version bumped to `0.5.2` in `internal/cli/cobra.go`.
+- `gofmt -l .` clean · `go build ./cmd/tpatch` ok · `go test ./...` all green · assets parity guard passes.
+- All 6 findings shipped as single-purpose commits on `main` (`36e058d..73cd648`).
+- Code-review sub-agent verdict: **APPROVED**. No drift remains between manual and auto accept paths; `ReconcileReapplied` now unreachable without `AcceptShadow` success for shadow-based paths.
+
 ## v0.5.1 — UX Polish & Quick Wins (Tranche C1 / M13)
 
 Low-risk, high-daily-use-impact improvements. 8 items; no new Go dependencies; all prior tests remain green.

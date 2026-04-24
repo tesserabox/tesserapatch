@@ -4,6 +4,49 @@
 
 ---
 
+## Review — Tranche C2 / v0.5.2 — 2026-04-23
+
+**Implementer**: c2-implementer sub-agent (general-purpose, 6400s)
+**Reviewer**: c2-reviewer sub-agent (code-review, 352s)
+**Task**: Post-v0.5.1 correctness fix pass — 6 validated findings from review session.
+
+### Checklist
+
+- [x] Code compiles: `go build ./cmd/tpatch`
+- [x] Tests pass: `go test ./...` (all packages, with and without cache)
+- [x] Formatted: `gofmt -l .` empty
+- [x] `.tpatch/` artifacts deterministic (sha256 reproducible from inputs)
+- [x] Secrets safe (N/A for this pass)
+- [x] CLI behavior matches SPEC.md and shipped v0.5.1 contract
+- [x] Handoff accurate
+- [x] Assets parity guard passes (skills edited for finding #6)
+- [x] No regressions
+- [x] 8 regression tests added, each asserting actual behavior (not tautological)
+- [x] `ReconcileReapplied` verified unreachable without helper success for shadow-based paths
+
+### Per-finding verdict
+
+1. `c2-resolve-apply-truthful` — ✅ correct. Shared `workflow.AcceptShadow` helper eliminates drift between manual and auto paths. `safety.EnsureSafeRepoPath` called on every file write. Failure preserves shadow + maps to `ReconcileBlockedRequiresHuman`. `TestGoldenReconcile_ResolveApplyTruthful` is the regression guard pre-v0.5.2 code would fail.
+2. `c2-refresh-index-clean` — ✅ correct. `GIT_INDEX_FILE` temp approach with deferred unlink on all paths. Regression test byte-compares `git status --porcelain` + checks intent-to-add marker.
+3. `c2-recipe-hash-provenance` — ✅ correct. Pointer field enables backward compat. Legacy-sidecar test + content-drift test both pass.
+4. `c2-remove-piped-stdin` — ✅ correct. Real `os.Pipe()` in test, not fake reader.
+5. `c2-amend-append-flag` — ✅ correct. `--append --reset` mutex enforced with "mutually exclusive" error.
+6. `c2-max-conflicts-drift` — ✅ correct. 8 sites (not 6 — agent found 2 more: cursor + windsurf skill formats). Runtime unchanged at 10. Parity guard green.
+
+### Cross-cutting
+
+- Shared helper pattern fully eliminates the manual-vs-auto drift that created finding #1 in the first place.
+- Only legitimate `ReconcileReapplied` assignments remaining: phase 4 `ForwardApplyStrict`, phase 4 `ForwardApply3WayClean` (both clean-apply, no shadow), and phase 3.5 after `AcceptShadow` success.
+- No terminology/contract drift in docs vs runtime detected.
+
+### Verdict: **APPROVED**
+
+### Action Taken
+
+Updated CHANGELOG v0.5.2 section, bumped `version = "0.5.2"` in `internal/cli/cobra.go`, flipped M13.5 to ✅ in ROADMAP.md, tagged v0.5.2, pushed tag. SQL: 6 c2-* todos → `done`; `c2-release-v0.5.2` → `done`; `m14.1-data-model` unblocked.
+
+---
+
 ## Review — PRD-feature-dependencies — 2026-04-23
 
 **Author**: dag-prd-author sub-agent (3 revision cycles)

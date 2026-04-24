@@ -145,6 +145,19 @@ See `docs/milestones/M9-interactive-harness.md` for task list.
 
 ## M13 — UX Polish & Quick Wins (Tranche C1, v0.5.1) ✅
 
+## M13.5 — Correctness Fix Pass (Tranche C2, v0.5.2) ✅
+
+Six confirmed findings from the v0.4.3..v0.5.1 delta review, shipped as a focused correctness-only release before starting M14.
+
+- c2-resolve-apply-truthful — silent correctness bug on `reconcile --resolve --apply` (shadow → real tree copy was never happening for auto-apply). Fix: shared `workflow.AcceptShadow` helper used by both manual and auto paths.
+- c2-refresh-index-clean — `DiffFromCommitForPaths` no longer leaks intent-to-add entries (uses `GIT_INDEX_FILE` temp index).
+- c2-recipe-hash-provenance — stale guard now detects recipe content drift (sha256), not only HEAD drift. Legacy sidecars still accepted.
+- c2-remove-piped-stdin — piped stdin auto-confirms remove, matching shipped v0.5.1 contract.
+- c2-amend-append-flag — new `amend --append`; replace stays default; mutex with `--reset`.
+- c2-max-conflicts-drift — 8 doc sites corrected to match runtime default of 10.
+
+8 regression tests added. Code-review verdict: APPROVED. See `docs/supervisor/LOG.md`.
+
 **Goal**: Low-risk, high-daily-use-impact improvements. 8 items: apply default mode, stdin add, progress spinner, editor integration, feature amend/remove, recipe stale guard, record lenient mode.
 
 **Scope**: Inline — no separate milestone file for polish tranches.
