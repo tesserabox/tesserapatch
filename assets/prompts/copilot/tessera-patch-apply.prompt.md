@@ -136,7 +136,7 @@ Flags:
 
 Verdicts: `shadow-awaiting` (all files resolved; feature state `reconciling-shadow`), `blocked-requires-human` (validation failed or no provider), `blocked-too-many-conflicts` (count > `--max-conflicts`).
 
-Each resolver run writes `.tpatch/features/<slug>/reconciliation/reconcile-session.json` — per-file status, validation reasons, shadow path. Agents acting as the provider (Path B) can edit the shadow files and then run `tpatch reconcile --accept <slug>`.
+Each resolver run writes `.tpatch/features/<slug>/artifacts/resolution-session.json` — per-file status, validation reasons, shadow path. Agents acting as the provider (Path B) can edit the shadow files and then run `tpatch reconcile --accept <slug>`.
 
 On `--accept`, tpatch applies non-conflicting hunks of `post-apply.patch` via 3-way merge (excluding resolved files), copies resolved files from shadow → real tree, regenerates `post-apply.patch`, snapshots the delta as `patches/NNN-reconcile.patch`, and marks the feature `applied`. `apply-recipe.json` is NOT auto-regenerated — re-run `tpatch implement` or `tpatch record` if the recipe matters to you.
 

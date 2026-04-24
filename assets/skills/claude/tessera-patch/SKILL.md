@@ -175,9 +175,9 @@ On 3-way conflict, `tpatch reconcile --resolve` asks the provider to merge each 
 | `blocked-requires-human` | At least one file failed validation (still has `<<<<<<<` markers, corrupted output, or no provider configured). |
 | `blocked-too-many-conflicts` | Conflict count exceeded `--max-conflicts`; the provider was never called. |
 
-### reconcile-session.json
+### resolution-session.json
 
-Each resolver run writes `.tpatch/features/<slug>/reconciliation/reconcile-session.json`. Shape:
+Each resolver run writes `.tpatch/features/<slug>/artifacts/resolution-session.json` (renamed from `reconcile-session.json` in v0.5.3 — that path is now the high-level reconcile summary). Shape:
 
 ```json
 {

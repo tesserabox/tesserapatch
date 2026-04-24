@@ -733,7 +733,7 @@ func tryPhase35(
 	case ResolveVerdictBlockedRequiresHuman:
 		result.Outcome = store.ReconcileBlockedRequiresHuman
 		result.Notes = append(result.Notes,
-			fmt.Sprintf("phase 3.5 blocked: %d file(s) failed validation or provider; see reconcile-session.json",
+			fmt.Sprintf("phase 3.5 blocked: %d file(s) failed validation or provider; see resolution-session.json",
 				len(result.FailedFiles)))
 		return result
 	default:

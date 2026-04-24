@@ -219,10 +219,12 @@ the flag value, not a positional arg. They are mutually exclusive.
 | `blocked-requires-human` | At least one file failed validation (still contains `<<<<<<<`, corrupted content, or no provider configured). ADR-010 D9: there is no heuristic fallback. |
 | `blocked-too-many-conflicts` | Conflict count exceeded `--max-conflicts` (default 10); provider was never called. |
 
-### reconcile-session.json
+### resolution-session.json
 
 Each resolver attempt writes
-`.tpatch/features/<slug>/reconciliation/reconcile-session.json`:
+`.tpatch/features/<slug>/artifacts/resolution-session.json` (renamed from
+`reconcile-session.json` in v0.5.3 — that path is now owned by the
+higher-level reconcile summary written by `saveReconcileArtifacts`):
 
 ```json
 {
@@ -270,7 +272,7 @@ matters to you.
 If the provider is unavailable or returns `blocked-requires-human`, you
 can still use the shadow as a scratch space: edit
 `.tpatch/shadow/<slug>-<ts>/<path>` directly, update the file's status
-in `reconcile-session.json` to `"resolved"`, then `tpatch reconcile
+in `resolution-session.json` to `"resolved"`, then `tpatch reconcile
 --accept <slug>`. The accept flow trusts the shadow contents; it does
 not re-validate that the provider wrote them.
 

@@ -18,9 +18,14 @@
 //   - Hard caps: MaxConflicts (default 10) and MaxFileBytes (default
 //     200 KB). Files over the byte cap are marked skipped-too-large;
 //     too many conflicts short-circuits the whole session.
-//   - On every path we emit reconcile-session.json to
+//   - On every path we emit resolution-session.json to
 //     `.tpatch/features/<slug>/artifacts/` and a human-readable
-//     resolution-report.md inside the shadow root.
+//     resolution-report.md inside the shadow root. (v0.5.3 split:
+//     resolver owns resolution-session.json; the outer reconcile
+//     pipeline owns reconcile-session.json — see saveReconcileArtifacts
+//     in reconcile.go. Previously both wrote the same path and
+//     reconcile's overwrite clobbered the resolver's outcomes[],
+//     breaking manual `reconcile --accept`.)
 //   - The resolver never touches the real working tree. Accept flow
 //     lives in b2-derived-refresh.
 
@@ -102,7 +107,7 @@ type FileOutcome struct {
 }
 
 // ResolveResult is the session-level outcome written to
-// reconcile-session.json.
+// resolution-session.json.
 type ResolveResult struct {
 	SessionID       string         `json:"session_id"`
 	StartedAt       time.Time      `json:"started_at"`
@@ -424,15 +429,19 @@ func newSessionID() string {
 	return fmt.Sprintf("rec-%s-%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), hex.EncodeToString(buf[:]))
 }
 
-// persistSession writes reconcile-session.json into the feature's
-// artifacts directory. This is the auditable record referenced by
-// `tpatch status` and the v0.5.0 resolution-report.
+// persistSession writes resolution-session.json into the feature's
+// artifacts directory. This is the auditable record of the phase-3.5
+// resolver run (per-file outcomes + validation) referenced by
+// `tpatch status`, the accept flow (loadResolvedFiles), and the
+// v0.5.0 resolution-report. Split from reconcile-session.json in
+// v0.5.3 — reconcile-session.json is now owned exclusively by
+// saveReconcileArtifacts and holds the high-level ReconcileResult.
 func persistSession(s *store.Store, slug string, res *ResolveResult) error {
 	data, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {
 		return err
 	}
-	return s.WriteArtifact(slug, "reconcile-session.json", string(data)+"\n")
+	return s.WriteArtifact(slug, "resolution-session.json", string(data)+"\n")
 }
 
 // writeResolutionReport emits a human-readable companion to the JSON

@@ -239,13 +239,13 @@ func TestResolveSkipsTooLarge(t *testing.T) {
 
 func assertSessionFile(t *testing.T, s *store.Store, slug, wantID string) {
 	t.Helper()
-	got, err := s.ReadFeatureFile(slug, filepath.Join("artifacts", "reconcile-session.json"))
+	got, err := s.ReadFeatureFile(slug, filepath.Join("artifacts", "resolution-session.json"))
 	if err != nil {
-		t.Fatalf("reconcile-session.json missing: %v", err)
+		t.Fatalf("resolution-session.json missing: %v", err)
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
-		t.Fatalf("reconcile-session.json invalid: %v", err)
+		t.Fatalf("resolution-session.json invalid: %v", err)
 	}
 	if id, _ := parsed["session_id"].(string); id != wantID {
 		t.Errorf("session_id = %q, want %q", id, wantID)

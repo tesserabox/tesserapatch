@@ -44,7 +44,7 @@ The architectural shape is locked by **ADR-010**. This PRD answers the 6 open qu
 **Single combined patch per reconcile run.**
 
 - Matches the existing numbered-snapshot convention (`NNN-<label>.patch`).
-- Per-file attribution lives in `reconcile-session.json` — that's the auditable record.
+- Per-file attribution lives in `resolution-session.json` — that's the auditable record.
 - Avoids N extra files per reconcile for a cosmetic gain.
 
 ### Q3 — Does `--resolve --apply` need a manual CI signal before auto-accepting?
@@ -81,7 +81,10 @@ The architectural shape is locked by **ADR-010**. This PRD answers the 6 open qu
 
 ## Data model additions
 
-### `reconcile-session.json` (in `.tpatch/features/<slug>/artifacts/`)
+### `resolution-session.json` (in `.tpatch/features/<slug>/artifacts/`)
+
+*(Renamed from `reconcile-session.json` in v0.5.3; the old filename is
+now the high-level reconcile summary owned by `saveReconcileArtifacts`.)*
 
 ```json
 {
@@ -167,7 +170,7 @@ All keys optional; defaults above. Flat scalar map — respects the existing zer
 
 - [ ] `go build ./...`, `go test ./...`, `gofmt -l .` all clean.
 - [ ] Reconcile without `--resolve` still stops at `3WayConflicts` (v0.4.4 parity preserved).
-- [ ] With `--resolve`: shadow worktree created, per-file provider calls made, `resolution-report.md` + `reconcile-session.json` emitted.
+- [ ] With `--resolve`: shadow worktree created, per-file provider calls made, `resolution-report.md` + `resolution-session.json` emitted.
 - [ ] Validation gate: Go syntax, conflict markers, identifier preservation, optional `test_command`.
 - [ ] `--accept` triggers atomic `RefreshDerivedArtifacts`; INTENT artifacts untouched.
 - [ ] `--reject` prunes shadow, restores previous state.

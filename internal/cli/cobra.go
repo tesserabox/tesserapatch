@@ -1018,7 +1018,7 @@ func runReconcileAccept(cmd *cobra.Command, s *store.Store, slug string) error {
 		return fmt.Errorf("reconcile --accept: %w", err)
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("reconcile --accept: no resolved files recorded for %q (reconcile-session.json missing or empty)", slug)
+		return fmt.Errorf("reconcile --accept: no resolved files recorded for %q (resolution-session.json missing or empty)", slug)
 	}
 
 	res, err := workflow.AcceptShadow(s, slug, files, st.Reconcile.UpstreamCommit, workflow.AcceptOptions{
@@ -1086,7 +1086,7 @@ func runReconcileShadowDiff(cmd *cobra.Command, s *store.Store, slug string) err
 		return fmt.Errorf("reconcile --shadow-diff: %w", err)
 	}
 	if len(files) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "(no resolved files recorded in reconcile-session.json)")
+		fmt.Fprintln(cmd.OutOrStdout(), "(no resolved files recorded in resolution-session.json)")
 		return nil
 	}
 
@@ -1102,13 +1102,17 @@ func runReconcileShadowDiff(cmd *cobra.Command, s *store.Store, slug string) err
 	return nil
 }
 
-// loadResolvedFiles reads reconcile-session.json and returns the list
-// of files whose resolver status is `resolved` (i.e., worth copying).
-// Skipped and failed files are intentionally excluded.
+// loadResolvedFiles reads resolution-session.json (written by the
+// phase-3.5 resolver; see workflow/resolver.go:persistSession) and
+// returns the list of files whose resolver status is `resolved`
+// (i.e., worth copying). Skipped and failed files are intentionally
+// excluded. Split from reconcile-session.json in v0.5.3 to fix a
+// dual-writer collision: saveReconcileArtifacts now owns
+// reconcile-session.json exclusively.
 func loadResolvedFiles(s *store.Store, slug string) ([]string, error) {
-	raw, err := s.ReadFeatureFile(slug, filepath.Join("artifacts", "reconcile-session.json"))
+	raw, err := s.ReadFeatureFile(slug, filepath.Join("artifacts", "resolution-session.json"))
 	if err != nil {
-		return nil, fmt.Errorf("read reconcile-session.json: %w", err)
+		return nil, fmt.Errorf("read resolution-session.json: %w", err)
 	}
 	var session struct {
 		Outcomes []struct {
@@ -1117,7 +1121,7 @@ func loadResolvedFiles(s *store.Store, slug string) ([]string, error) {
 		} `json:"outcomes"`
 	}
 	if err := json.Unmarshal([]byte(raw), &session); err != nil {
-		return nil, fmt.Errorf("parse reconcile-session.json: %w", err)
+		return nil, fmt.Errorf("parse resolution-session.json: %w", err)
 	}
 	var files []string
 	for _, o := range session.Outcomes {
