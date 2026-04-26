@@ -4,7 +4,7 @@
 
 - **Task ID**: M14.3 — Reconcile topological traversal + composable labels + compound verdict
 - **Milestone**: M14 — Feature Dependencies / DAG (Tranche D, v0.6.0)
-- **Status**: Not Started (unblocked by M14.2 APPROVED, commits `24baf92`, `9a5f2f3`, `4dfe0f1`, `cdd5484`)
+- **Status**: In Progress (started 2026-04-26 — implementation sub-agent)
 - **Assigned**: 2026-04-26
 - **Estimated size**: ~500 LOC (largest M14 sub-milestone)
 

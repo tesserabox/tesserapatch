@@ -47,6 +47,40 @@ const (
 	ReconcileBlockedRequiresHuman    ReconcileOutcome = "blocked-requires-human"
 )
 
+// ReconcileLabel is a derived overlay on top of Reconcile.Outcome that
+// describes the DAG context (M14.3 / ADR-011 D3 + D6). Labels are computed
+// on demand from parent state; they are NOT new ReconcileOutcome values
+// and they are NOT persisted as enum values on Reconcile.Outcome.
+//
+// Multiple labels may stack on a single feature (e.g. a child waiting on
+// one parent and stale relative to another). They are stored sorted
+// alphabetically for deterministic JSON output.
+//
+// Authoritative source for the parent verdict that drives label
+// composition: read parent.Reconcile.Outcome via store.LoadFeatureStatus
+// — never artifacts/reconcile-session.json (ADR-010 D5).
+type ReconcileLabel string
+
+const (
+	// LabelWaitingOnParent — at least one hard parent is not yet applied
+	// (state is requested/analyzed/defined/implementing/reconciling/
+	// reconciling-shadow). The child cannot meaningfully reconcile until
+	// the parent reaches applied/active/upstream_merged.
+	LabelWaitingOnParent ReconcileLabel = "waiting-on-parent"
+
+	// LabelBlockedByParent — at least one hard parent is in a terminal
+	// failure verdict (Outcome=blocked-* or shadow-awaiting on an applied
+	// parent, or State=blocked). Combined with the child's own
+	// needs-human-resolution this produces the compound presentation
+	// "blocked-by-parent-and-needs-resolution" (see EffectiveOutcome).
+	LabelBlockedByParent ReconcileLabel = "blocked-by-parent"
+
+	// LabelStaleParentApplied — at least one applied hard parent has been
+	// updated since the child's last reconcile attempt. The child's
+	// recorded baseline may no longer reflect the parent's current state.
+	LabelStaleParentApplied ReconcileLabel = "stale-parent-applied"
+)
+
 // DefaultMaxTokensImplement is the fallback budget for the implement-phase
 // LLM response when Config.MaxTokensImplement is unset or non-positive.
 // Bumped from the previous hard-coded 8192 to reduce mid-JSON truncation
@@ -132,6 +166,38 @@ type ReconcileSummary struct {
 	ResolvedFiles  int    `json:"resolved_files,omitempty"`
 	FailedFiles    int    `json:"failed_files,omitempty"`
 	SkippedFiles   int    `json:"skipped_files,omitempty"`
+
+	// Labels is the M14.3 composable-label overlay computed from the DAG
+	// (ADR-011 D3 + D6, PRD-feature-dependencies §3.5). Populated only
+	// when Config.DAGEnabled() is true and at least one label applies.
+	// `omitempty` is load-bearing for byte-identity round-trips against
+	// pre-M14.3 fixtures: when the flag is off the field must round-trip
+	// to the empty/absent form.
+	Labels []ReconcileLabel `json:"labels,omitempty"`
+}
+
+// EffectiveOutcome returns the compound presentation of (Outcome, Labels)
+// per ADR-011 D6 + PRD §3.5. Labels overlay on top of Outcome at READ
+// time; the persisted Outcome is never the compound string.
+//
+// Compound rule (M14.3): when Outcome=blocked-requires-human (the
+// "needs-human-resolution" intrinsic verdict) AND Labels contains
+// LabelBlockedByParent, the compound presentation is
+// "blocked-by-parent-and-needs-resolution". This signals to operators
+// that the child's own resolution is also gated on a broken parent.
+//
+// All other (Outcome, Labels) combinations stringify to the bare Outcome.
+// Programmatic decisions (e.g. apply gating, planner ordering) MUST read
+// Outcome and Labels separately — the compound string is for display only.
+func (r ReconcileSummary) EffectiveOutcome() string {
+	if r.Outcome == ReconcileBlockedRequiresHuman {
+		for _, l := range r.Labels {
+			if l == LabelBlockedByParent {
+				return "blocked-by-parent-and-needs-resolution"
+			}
+		}
+	}
+	return string(r.Outcome)
 }
 
 // Config holds the .tpatch/config.yaml contents.
