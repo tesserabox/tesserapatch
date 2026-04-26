@@ -97,6 +97,16 @@ To delete or rename a file, use Path B: `apply --mode started`,
 `git rm <path>` (or `git mv`), `apply --mode done`, `record`. Richer
 op support is tracked in `feat-recipe-schema-expansion`.
 
+Optional fields:
+
+- `created_by` — optional string on any operation; value is the parent
+  feature slug that originated this file in the feature DAG (M14,
+  ADR-011). Ordering / label hint only; the apply path does not branch
+  on it. Currently inert — wired by future M14.3+ features (label
+  composition, topo reconcile). Omit when the feature has no DAG
+  provenance to declare. Recipes without `created_by` round-trip
+  byte-identical to the v0.5.3 schema.
+
 Path safety:
 
 - All `path` values are repo-relative.

@@ -51,6 +51,22 @@ type RecipeOperation struct {
 	Content string `json:"content"` // for write-file, append-file
 	Search  string `json:"search"`  // for replace-in-file: text to find
 	Replace string `json:"replace"` // for replace-in-file: replacement text
+
+	// CreatedBy is an optional parent-feature slug declaring which feature
+	// originated this file. It is an ordering / label hint consumed by the
+	// DAG features added in M14.3+ (label composition, topo reconcile).
+	//
+	// In M14.2 the field is persisted but inert — no apply / reconcile /
+	// record code reads it, and the implement phase does not yet populate
+	// it. Wiring is deferred to M14.3 once a real consumer (label
+	// composition) lands.
+	//
+	// `omitempty` is load-bearing: recipes that do not declare DAG
+	// provenance must round-trip byte-identical to v0.5.3.
+	//
+	// Reading rule (ADR-010 D5): for reconcile-result decisions, callers
+	// must read status.Reconcile.Outcome — never artifacts/reconcile-session.json.
+	CreatedBy string `json:"created_by,omitempty"`
 }
 
 // RunImplement generates a deterministic apply recipe for a feature.

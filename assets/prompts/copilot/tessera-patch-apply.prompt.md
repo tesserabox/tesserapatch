@@ -102,6 +102,7 @@ Phase → artifact → state contract (the `--manual` flag validates this):
 Semantics:
 
 - Ops: `ensure-directory`, `write-file { path, content }`, `replace-in-file { path, search, replace }`, `append-file { path, content }`. No `delete-file` / `rename-file` yet — use Path B + `git rm` for deletes.
+- Optional `created_by` (string, parent feature slug) on any op — DAG ordering / label hint consumed by future M14.3+ features. Inert in v0.5.x; omit unless the recipe declares feature-DAG provenance.
 - `replace-in-file.search` is a **literal string match, not a regex**. Paste the exact text, include surrounding lines for uniqueness.
 - `replace-in-file` replaces exactly one occurrence per op. Emit multiple ops to replace several copies.
 - All `path` values are repo-relative. `../`, absolute paths, or symlinks outside the repo abort `apply --mode execute` (`EnsureSafeRepoPath`).

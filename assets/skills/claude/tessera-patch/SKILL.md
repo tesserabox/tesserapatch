@@ -155,6 +155,10 @@ The `implement` phase produces a deterministic recipe that the `apply` phase con
 - Operations are executed in the order they appear. Later ops may depend on earlier ops (e.g. `ensure-directory` before `write-file`).
 - There is no `delete-file` or `rename-file` op in the current schema. To delete a file, use Path B: `apply --mode started`, `git rm <path>`, `apply --mode done`, `record`. Richer ops are tracked in `feat-recipe-schema-expansion`.
 
+### Optional fields
+
+- **`created_by`** — optional string on any operation. Value is the parent feature slug that originated this file in the feature DAG (M14, ADR-011). Ordering / label hint only — the apply path does not branch on it. Currently inert; consumed by future DAG features (label composition in M14.3, topo reconcile in M14.3+). Omit when the feature has no DAG provenance to declare; recipes without `created_by` round-trip byte-identical to the v0.5.3 schema.
+
 ## Reconcile Phase 3.5 — Provider-assisted conflict resolution (v0.5.0)
 
 On 3-way conflict, `tpatch reconcile --resolve` asks the provider to merge each conflicted file inside a **shadow worktree** (`.tpatch/shadow/<slug>-<ts>/`). The real working tree is never touched until you accept. See `docs/adrs/ADR-010-provider-conflict-resolver.md` for the full decision table.
