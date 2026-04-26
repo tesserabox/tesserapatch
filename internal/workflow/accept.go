@@ -146,6 +146,28 @@ func AcceptShadow(s *store.Store, slug string, files []string, upstreamCommit st
 		}
 	}
 
+	// M14.3 / ADR-011: re-compute labels for the accepted child. Parent
+	// state may have changed mid-flight (e.g. another reconcile run
+	// flipped a parent's verdict between phase 3.5 staging and the user
+	// confirming this accept). When the flag is off, ComposeLabels
+	// returns nil and we leave Reconcile.Labels at whatever the prior
+	// value was — flag-off byte-identity preserved.
+	if cfg, cerr := s.LoadConfig(); cerr == nil && cfg.DAGEnabled() {
+		labels, lerr := ComposeLabels(s, slug)
+		if lerr == nil {
+			if st, err := s.LoadFeatureStatus(slug); err == nil {
+				st.Reconcile.Labels = labels
+				if serr := s.SaveFeatureStatus(st); serr != nil {
+					if res.RefreshWarning == "" {
+						res.RefreshWarning = fmt.Sprintf("refresh labels failed: %v", serr)
+					} else {
+						res.RefreshWarning = res.RefreshWarning + "; refresh labels failed: " + serr.Error()
+					}
+				}
+			}
+		}
+	}
+
 	return res, nil
 }
 
