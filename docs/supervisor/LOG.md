@@ -4,6 +4,58 @@
 
 ---
 
+## Review — M14.2 — 2026-04-26
+
+**Implementer**: m14-2-implementer sub-agent (general-purpose, 1777s)
+**Reviewer**: m14-2-reviewer sub-agent (code-review, 1100s)
+**Task**: Apply gate + `created_by` recipe op + 6-skill parity-guard rollout. Second sub-milestone of M14 / Tranche D / v0.6.0. ~250 LOC + 6-skill update, gated behind `features_dependencies` flag.
+
+### Commits reviewed (delta vs M14.1 closeout `33ebad0`)
+
+- `24baf92` feat(recipe): add created_by op field + 6-skill rollout
+- `9a5f2f3` feat(workflow): add CheckDependencyGate (9 unit tests)
+- `4dfe0f1` feat(cli): wire dependency gate into apply (2 integration tests)
+- `cdd5484` docs(handoff): M14.2 complete, ready for review
+
+### Checklist
+
+- [x] Builds, tests, gofmt all green
+- [x] Parity guard pass (6 skill formats + docs/agent-as-provider.md updated in lockstep)
+- [x] 14 new tests (9 gate + 3 recipe round-trip + 2 CLI integration)
+- [x] M14.1 regression clean (17/17 tests pass)
+- [x] No reconcile drift (`reconcile.go`/`accept.go`/`resolver.go` unchanged — verified by empty `git diff`)
+- [x] All 4 commits carry the Co-author trailer
+- [x] CURRENT.md accurate
+
+### Critical correctness checks (all 12 pass)
+
+1. **Recipe byte-identity** — `bytes.Equal` round-trip without `created_by` confirmed; v0.5.3 recipes unchanged.
+2. **Hard vs soft** — "mixed deps" test asserts ONLY unapplied hard parent in error message; soft + applied hard correctly omitted.
+3. **`upstream_merged` + empty `satisfied_by`** — passes (provenance is optional per ADR-011 D5).
+4. **`upstream_merged` + non-empty `satisfied_by`** — shape check only (40-hex); `git merge-base` reachability deferred as documented limitation.
+5. **Flag-off true no-op** — early return BEFORE any feature-status load.
+6. **Sentinel error** — `errors.Is(err, ErrParentNotApplied)` works; 3 tests exercise it.
+7. **CLI integration completeness** — single test asserts all 4: non-zero exit + parent in stderr + no tree mutation + child state unchanged.
+8. **Wiring** — both `runApplyExecute` (line 540) AND `runApplyAuto` (line 635) call gate BEFORE recipe parsing. `prepare` and `started` correctly NOT gated.
+9. **6-skill parity** — Claude SKILL.md L158-160, Copilot L111, Cursor .mdc L113, plus Windsurf/Copilot prompt/Generic workflow all consistent.
+10. **External-reviewer guard inheritance** — doc comments on both `CheckDependencyGate` (L34-37) and `CreatedBy` (L67-68) require reading `status.Reconcile.Outcome` not `reconcile-session.json`. M14.3 inherits.
+11. **Reconcile untouched** — empty diff verified.
+12. **`CreatedBy:` not populated by production code** — grep confirmed only test files write it.
+
+### Verdict: **APPROVED**
+
+No revisions, no notes. Production-ready.
+
+### Action Taken
+
+- SQL: `m14.2-apply-gate` → done. `m14.3-reconcile-topo` → in_progress.
+- ROADMAP M14.2 ticked ✅ with commit shas.
+- M14.2 handoff archived → HISTORY.md.
+- CURRENT.md rewritten for M14.3 (reconcile topological traversal + composable labels + compound verdict, ~500 LOC).
+- Auto-chain continues to M14.3 per supervisor plan (will pause before M14.4 — the user-facing release/flip).
+
+---
+
 ## Review — M14.1 — 2026-04-26
 
 **Implementer**: m14-1-implementer sub-agent (general-purpose, 4152s)
