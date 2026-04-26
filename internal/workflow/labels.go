@@ -94,8 +94,40 @@ func ComposeLabels(s *store.Store, slug string) ([]store.ReconcileLabel, error) 
 	if err != nil {
 		return nil, err
 	}
-	if len(child.DependsOn) == 0 {
+	return composeLabelsFromStatus(s, child), nil
+}
+
+// composeLabelsAt is like ComposeLabels but uses asOf as the
+// child's effective reconcile baseline for the staleness check, instead
+// of the on-disk child.Reconcile.AttemptedAt. Callers inside
+// RunReconcile use this to ensure persisted Labels reflect the
+// AttemptedAt about to be written, not the previous run's value
+// (M14 fix-pass F2).
+func composeLabelsAt(s *store.Store, slug string, asOf string) ([]store.ReconcileLabel, error) {
+	cfg, err := s.LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.DAGEnabled() {
 		return nil, nil
+	}
+	child, err := s.LoadFeatureStatus(slug)
+	if err != nil {
+		return nil, err
+	}
+	if asOf != "" {
+		child.Reconcile.AttemptedAt = asOf
+	}
+	return composeLabelsFromStatus(s, child), nil
+}
+
+// composeLabelsFromStatus is the body shared by ComposeLabels and
+// composeLabelsAt. It accepts an already-loaded FeatureStatus so the
+// caller can override fields (e.g. AttemptedAt) prior to label
+// composition without round-tripping through disk.
+func composeLabelsFromStatus(s *store.Store, child store.FeatureStatus) []store.ReconcileLabel {
+	if len(child.DependsOn) == 0 {
+		return nil
 	}
 
 	set := make(map[store.ReconcileLabel]struct{})
@@ -152,12 +184,12 @@ func ComposeLabels(s *store.Store, slug string) ([]store.ReconcileLabel, error) 
 	}
 
 	if len(set) == 0 {
-		return nil, nil
+		return nil
 	}
 	out := make([]store.ReconcileLabel, 0, len(set))
 	for l := range set {
 		out = append(out, l)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out, nil
+	return out
 }

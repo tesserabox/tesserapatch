@@ -40,6 +40,18 @@ type ReconcileResult struct {
 	// flag-off byte-identity of reconcile-session.json against pre-M14.3
 	// fixtures.
 	Labels []store.ReconcileLabel `json:"labels,omitempty"`
+
+	// attemptedAt is the timestamp shared between saveReconcileArtifacts
+	// (which feeds it to composeLabelsAt as the staleness baseline) and
+	// updateFeatureState (which writes it as ReconcileSummary.AttemptedAt
+	// + FeatureStatus.UpdatedAt). Populated lazily by whichever runs
+	// first. M14 fix-pass F2: prior to this field, labels were composed
+	// against the OLD on-disk AttemptedAt, then the new AttemptedAt
+	// overwrote it — leaving a child flagged stale against itself.
+	//
+	// Unexported and so ignored by encoding/json (no schema impact, no
+	// fixture drift).
+	attemptedAt string
 }
 
 // ReconcileOptions configures RunReconcile. Zero value keeps v0.4.x
@@ -447,15 +459,24 @@ Does the upstream now satisfy this feature's requirements? Compare the acceptanc
 //     (resolver-owned) — see resolver.persistSession. Splitting the two
 //     artifacts is what fixes the v0.5.2 dual-writer collision.
 func saveReconcileArtifacts(s *store.Store, slug string, result *ReconcileResult) {
+	// M14 fix-pass F2: generate the AttemptedAt timestamp once and
+	// share it with updateFeatureState. ComposeLabels uses this same
+	// value as the staleness baseline so that, when persisted, the
+	// Labels field reflects the AttemptedAt about to be written —
+	// not the previous run's value (which would leave the child
+	// flagged stale against itself).
+	if result != nil && result.attemptedAt == "" {
+		result.attemptedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 	// M14.3: enrich the result with composable labels before serializing
 	// so reconcile-session.json captures the DAG context. When the flag
-	// is off, ComposeLabels returns nil and `omitempty` keeps the field
+	// is off, composeLabelsAt returns nil and `omitempty` keeps the field
 	// out of JSON (byte-identity vs pre-M14.3 fixtures).
 	//
 	// Skip if the caller already set labels (e.g. the phase-3.5 short-
 	// circuit path explicitly attaches its own label set).
 	if result != nil && len(result.Labels) == 0 {
-		if labels, lerr := ComposeLabels(s, slug); lerr == nil && len(labels) > 0 {
+		if labels, lerr := composeLabelsAt(s, slug, result.attemptedAt); lerr == nil && len(labels) > 0 {
 			result.Labels = labels
 		}
 	}
@@ -501,8 +522,12 @@ func updateFeatureState(s *store.Store, slug string, result *ReconcileResult) {
 		return
 	}
 
+	if result != nil && result.attemptedAt == "" {
+		result.attemptedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+
 	status.Reconcile = store.ReconcileSummary{
-		AttemptedAt:    time.Now().UTC().Format(time.RFC3339),
+		AttemptedAt:    result.attemptedAt,
 		UpstreamRef:    result.UpstreamRef,
 		UpstreamCommit: result.UpstreamCommit,
 		Outcome:        result.Outcome,
@@ -516,7 +541,7 @@ func updateFeatureState(s *store.Store, slug string, result *ReconcileResult) {
 		Labels: result.Labels,
 	}
 	status.LastCommand = "reconcile"
-	status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	status.UpdatedAt = result.attemptedAt
 
 	switch result.Outcome {
 	case store.ReconcileUpstreamed:
