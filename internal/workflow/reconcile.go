@@ -82,6 +82,19 @@ func RunReconcile(ctx context.Context, s *store.Store, slugs []string, upstreamR
 		return nil, fmt.Errorf("no features to reconcile (no applied or active features found)")
 	}
 
+	// M14.3 / ADR-011 D9: when the dependency-DAG flag is enabled,
+	// reorder the input slug set into hard-parent topological order
+	// (parents reconcile before children). When disabled, preserve the
+	// pre-M14.3 input order byte-for-byte. PlanReconcile rejects cycles
+	// and unknown slugs with descriptive errors.
+	if cfg, cerr := s.LoadConfig(); cerr == nil && cfg.DAGEnabled() {
+		ordered, perr := PlanReconcile(s, slugs)
+		if perr != nil {
+			return nil, fmt.Errorf("reconcile planning failed: %w", perr)
+		}
+		slugs = ordered
+	}
+
 	// Resolve upstream commit
 	upstreamCommit, err := gitutil.ResolveRef(s.Root, upstreamRef)
 	if err != nil {
