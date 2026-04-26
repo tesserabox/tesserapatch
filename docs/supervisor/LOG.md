@@ -4,6 +4,53 @@
 
 ---
 
+## Review — M14.1 — 2026-04-26
+
+**Implementer**: m14-1-implementer sub-agent (general-purpose, 4152s)
+**Reviewer**: m14-1-reviewer sub-agent (code-review, 307s)
+**Task**: Feature Dependencies data model + validation. First sub-milestone of M14 / Tranche D / v0.6.0. ~300 LOC, gated behind `features_dependencies` flag (default false). No user-visible behavior changes.
+
+### Commits reviewed (delta vs `v0.5.3`)
+
+- `02f1ba9` feat(store): add Dependency type + DAG primitives
+- `d166281` feat(store): add dependency validation
+- `7dd5941` feat(config): add features_dependencies flag
+
+### Checklist
+
+- [x] Builds, tests, gofmt all green
+- [x] 30 new test cases under `internal/store` — all real assertions
+- [x] No regressions (`TestGoldenReconcile_*` 7 tests pass)
+- [x] Parity guard untouched (`assets/` unchanged)
+- [x] Co-author trailer on all 3 commits
+- [x] CURRENT.md accurate
+
+### Critical correctness checks (all 10 pass)
+
+1. **Flag-off byte-identity** — `TestRoundtrip_PreM14StatusByteIdentity` does string comparison of round-tripped fixture bytes. `omitempty` works.
+2. **Deterministic topo order** — runs `TopologicalOrder` 50× on multi-valid-order graph, `reflect.DeepEqual` each iteration. Sibling ties broken by slug.
+3. **Cycle detection** — self-edge detected; DFS returns the cycle path string, not just an error.
+4. **5 PRD §3.3 rules** — each with positive + negative test (self-dep, dangling, kind conflict, cycle, satisfied-by-upstream-only) plus invalid-kind guard.
+5. **Sentinel errors** — 6 errors, all wrappable via `errors.Is` and exercised in tests.
+6. **Flat YAML flag** — round-trips through both repo + global config paths (per zero-dep parser limitation).
+7. **External-reviewer guard baked in** — doc comments on `FeatureStatus.DependsOn` and `dag.go` header explicitly state DAG logic must read `status.Reconcile.Outcome` and never `artifacts/reconcile-session.json`. M14.3 inherits this.
+8. **Pure DAG functions** — `dag.go` has no IO; `Store` parameter only on validation.
+9. **Soft vs hard** — both kinds count equally for topo/cycle; gate-/label-relevance deferred per PRD §6.
+10. **Flag is observably inert** — grep confirmed no caller in `cmd/`, `internal/cli/`, or `internal/workflow/` gates on `DAGEnabled` yet. Flag exists; nothing toggles.
+
+### Verdict: **APPROVED**
+
+No revisions. No deferred notes. Data model is load-bearing for M14.2/.3 but fully gated; zero user-visible change until M14.4 cutover.
+
+### Action Taken
+
+- Logged this entry.
+- SQL: `m14.1-data-model` → done. `m14.2-apply-gate` → in_progress.
+- CURRENT.md rewritten for M14.2 (apply gate + `created_by` recipe op + 6-skill parity-guard rollout, ~250 LOC).
+- No version bump / CHANGELOG entry — M14 sub-milestones land behind the flag; the v0.6.0 release ships at M14.4.
+
+---
+
 ## Post-release Review — v0.5.3 follow-up — 2026-04-24
 
 **Reviewer**: external (vscode review session, full `v0.5.2..v0.5.3` delta + targeted probe test)

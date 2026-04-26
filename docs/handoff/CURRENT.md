@@ -2,114 +2,125 @@
 
 ## Active Task
 
-- **Task ID**: M14.1 — Feature Dependencies data model + validation
+- **Task ID**: M14.2 — Apply gate + `created_by` recipe op + 6-skill parity-guard rollout
 - **Milestone**: M14 — Feature Dependencies / DAG (Tranche D, v0.6.0)
-- **Status**: Review (ready for code-review sub-agent, completed 2026-04-24)
-- **Assigned**: 2026-04-24
-
-### Session Summary (2026-04-24)
-
-Implemented the M14.1 data-model + validation slice, fully gated behind `features_dependencies` (default false). No user-visible behaviour change. All 5 PRD §3.3 validation rules covered with sentinel errors + tests; DFS cycle detection and Kahn topological order pure functions in `internal/store/dag.go`; round-trip byte-identity verified against a pre-M14 `status.json` fixture.
-
-### Files Changed
-
-- `internal/store/types.go` — added `Dependency` struct, kind constants, `DependsOn []Dependency` (omitempty) on `FeatureStatus`, `FeaturesDependencies bool` config field, `Config.DAGEnabled()` helper.
-- `internal/store/dag.go` (new) — `DetectCycles`, `TopologicalOrder` (Kahn, deterministic), `Children`, `ErrCycle` sentinel. Pure, no IO. Doc comments enforce the ADR-010 D5 reminder for downstream readers.
-- `internal/store/validation.go` (new) — `ValidateDependencies` + `ValidateAllFeatures`; sentinels `ErrSelfDependency`, `ErrDanglingDependency`, `ErrKindConflict`, `ErrSatisfiedByRequiresUpstream`, `ErrInvalidDependencyKind`.
-- `internal/store/store.go` — repo `SaveConfig`/`parseYAMLConfig` now round-trip the flat `features_dependencies:` key.
-- `internal/store/global.go` — global `renderGlobalYAML` and `mergeConfig` carry the same key (repo-true OR'd into global).
-- `internal/store/dag_test.go` (new) — empty graph, isolated node, self-edge, 2-/3-node cycles, linear acyclic, diamond, deterministic topo (50 iters), Kahn cycle error path, `Children` ordering.
-- `internal/store/validation_test.go` (new) — positive + negative cases for all 5 rules, plus `ValidateAllFeatures` surfacing all sentinels at once.
-- `internal/store/roundtrip_test.go` (new) — pre-M14 fixture byte-identity, empty `depends_on` omit guard, populated `depends_on` round-trip, `Config.FeaturesDependencies` round-trip.
-- `docs/handoff/CURRENT.md` — this update.
-
-### Test Results
-
-- `gofmt -l .` → clean
-- `go build ./cmd/tpatch` → ok
-- `go test ./...` → all packages pass (store 1.6s, cli 5.1s, workflow 12.2s).
-- Targeted: `go test ./internal/store -run 'DAG|Cycle|Topo|Children|Validate|Roundtrip|Config_Features' -count=1 -v` → 30 cases, all PASS.
-
-### Implementation choices (M14.1)
-
-- **Config flag shape**: Option A (flat top-level key `features_dependencies: true|false`). Lower risk; works with existing flat YAML parser (`internal/store/store.go:497`). Nested `features:` block deferred — would force a parser rewrite for no semantic gain.
-- **Flag wiring scope**: Flag parses + round-trips. No callers gate on it in M14.1 — apply/reconcile wiring lives in M14.2/M14.3.
-- **Doc-comment guard**: `Dependency` and DAG types carry an explicit comment that `status.Reconcile.Outcome` is the authoritative reconcile result; `reconcile-session.json` is audit-only (per ADR-010 D5).
+- **Status**: Not Started (unblocked by M14.1 APPROVED, commits `02f1ba9`, `d166281`, `7dd5941`)
+- **Assigned**: 2026-04-26
 
 ### Context
 
-v0.5.3 shipped (`4636878`, `3ac7465`, `8a4af4b`, `6024942`, tag `v0.5.3`). All correctness baselines needed for M14 now in place:
+M14.1 landed the data model: `Dependency` struct + `FeatureStatus.DependsOn` (omitempty) + DFS cycle detection + Kahn topo + 5 validation rules + sentinel errors + `features_dependencies` flag (default false). 30 new tests, byte-identity round-trip guard, no callers yet gate on the flag.
 
-- `workflow.AcceptShadow` is the single accept helper for shadow → real (v0.5.2) and stamps `Reconcile.Outcome=reapplied` (v0.5.3) — M14.3 label composition will read it.
-- Resolver and reconcile have clean artifact ownership: `resolution-session.json` (per-file outcomes) vs `reconcile-session.json` (high-level summary).
-- Recipe stale guard catches both HEAD and content drift.
-- Index-dirty bug on refresh fixed.
+M14.2 adds the **first behavior change** — but still gated. With `features_dependencies=true`:
+1. `tpatch apply` refuses to execute when any **hard** parent is not yet `applied`/`upstream_merged`.
+2. The recipe gains a new optional op `created_by` so child features can declare which parent originated a file (used by M14.3 for label composition).
 
-No shipped feature currently exposes `depends_on` — M14.1 adds the data model behind `features.dependencies: true` config flag (default false).
+### Authoritative docs (must read before coding)
 
-### Authoritative docs (read before coding)
+1. `docs/adrs/ADR-011-feature-dependencies.md` — locks 9 decisions. Especially **D4** (hard deps gate apply + `created_by`; soft gates neither) and **D5** (`upstream_merged` satisfies deps via `satisfied_by`).
+2. `docs/prds/PRD-feature-dependencies.md` — §3.2 apply gate semantics, §3.3 validation, §3.5 labels (READ but DON'T IMPLEMENT — that's M14.3), §6 milestone sizing.
+3. `docs/adrs/ADR-010-provider-conflict-resolver.md` D5 — artifact ownership contract. Note: M14.2 does NOT touch reconcile, so this is reference-only.
+4. `assets/assets_test.go` — the parity guard. M14.2 mutates the recipe JSON contract — the parity guard MUST stay green after the rollout.
 
-1. `docs/adrs/ADR-011-feature-dependencies.md` — **MUST READ**. Locks 9 decisions.
-2. `docs/prds/PRD-feature-dependencies.md` — 736-line PRD (APPROVED WITH NOTES). §3.1 data model, §3.5 composable labels, §4.5 precedence, §6 milestone sizing, §7 acceptance criteria. Note §3.4 residual terminology drift — **always defer to ADR-011 + §4.5** when the two conflict.
-3. `docs/ROADMAP.md` M14 section — sub-milestone boundaries.
+### M14.2 scope (~250 LOC + 6 skill format updates)
 
-### M14.1 scope (~300 LOC)
+#### 1. Apply gate (~80 LOC)
 
-**Code additions**:
-- `internal/store/types.go`: `Dependency` struct (`slug`, `kind` = `hard|soft`, optional `satisfied_by` for `upstream_merged`) added to `FeatureStatus` as `depends_on []Dependency`.
-- `internal/store/dag.go` (new): DFS cycle detection + Kahn topological traversal over the feature set. Pure functions; no IO.
-- `internal/store/validation.go` (new): 5 validation rules per PRD §3.3:
-  1. No self-dependency.
-  2. No cycles.
-  3. No dangling refs (every `slug` must exist in the store).
-  4. No kind conflict (same parent declared both hard and soft is rejected).
-  5. `satisfied_by` only valid when parent state is `upstream_merged`.
-- `internal/store/config.go` (or wherever config lives): `features.dependencies` bool flag, default false. All DAG code paths must no-op when flag is off.
-- CLI plumbing: no user-visible commands in M14.1. Just make `add`/`status` round-trip the new field when the flag is on.
+- New: `workflow.CheckDependencyGate(s *Store, slug string) error` — looks up the feature's `DependsOn`, for each `Kind=hard` parent verifies `state ∈ {applied, upstream_merged}` (and if `upstream_merged`, that `SatisfiedBy` matches a parent commit reachable from current HEAD — minimal check, see PRD §3.2).
+- Wire into `apply --mode execute` and `apply --mode auto` BEFORE the existing recipe execution begins. Soft deps are NOT gated — they're ordering hints only.
+- **Gated by `features_dependencies` flag** — when false, `CheckDependencyGate` is a no-op. Same flag from M14.1.
+- Error message must be actionable: list the blocking parent slug(s) and their current state. Suggest `tpatch apply <parent>` first.
+- Sentinel: `ErrParentNotApplied` (wrappable via `errors.Is`).
 
-**Tests**:
-- `dag_test.go`: cycle detection (direct self, 2-node, 3-node), topo order determinism (ties broken by slug), empty graph, single node.
-- `validation_test.go`: each of 5 rules with positive and negative cases.
-- Round-trip: add a feature with `depends_on`, reload from disk, verify equality.
-- Feature-flag off: all new code paths bypassed; `status.json` schema unchanged byte-for-byte for pre-M14.1 fixtures.
+Tests:
+- gate-disabled-passes (flag off, hard parent in `analyzed` state — apply proceeds)
+- gate-rejects-hard-unapplied (flag on, hard parent in `analyzed` — apply rejected)
+- gate-allows-hard-applied (flag on, hard parent applied — apply proceeds)
+- gate-allows-upstream-merged (flag on, hard parent in `upstream_merged` with valid `satisfied_by` — apply proceeds)
+- gate-rejects-upstream-merged-bad-sha (flag on, `satisfied_by` not reachable from HEAD — apply rejected)
+- gate-ignores-soft (flag on, only soft parents unapplied — apply proceeds)
+- gate-mixed (flag on, one hard applied + one hard not + one soft not — apply rejected with only the unapplied hard listed)
 
-**Not in M14.1** (belongs to M14.2+):
-- Apply gate enforcement.
-- `created_by` recipe op.
-- Reconcile topological traversal.
-- Composable DAG labels.
-- `status --dag` output.
-- Any of the 6 skill-format updates.
+#### 2. `created_by` recipe op (~120 LOC + 6-skill rollout)
 
-### Suggested approach
+PRD §3.4 (NOTE: this section has the residual ADR-011 D6 terminology drift — defer to ADR-011 D4 + §3.5 for any conflict). The recipe gains an optional field on each operation:
 
-1. Read ADR-011 end to end, then PRD §3 and §4.5.
-2. Sketch the `Dependency` struct + `FeatureStatus` additions.
-3. Write `dag.go` + tests first (pure, fast iteration).
-4. Write `validation.go` + tests.
-5. Wire the config flag; ensure zero behavior change when flag is off.
-6. Round-trip test from existing `status.json` fixtures to prove backward compat.
+```json
+{
+  "op": "patch",
+  "path": "src/auth.ts",
+  "created_by": "feat-jwt-auth",   // optional; the parent slug that originated this file
+  "content": "..."
+}
+```
 
-### Validation required
+- Update `internal/workflow/recipe.go` (or wherever `RecipeOperation` is defined) to add `CreatedBy string \`json:"created_by,omitempty"\`` field.
+- The field is **persisted but inert in M14.2** — no behavior depends on it. M14.3 reads it for label composition. Document this clearly in a doc comment.
+- `omitempty` is critical — recipes generated for features with no DAG flag must round-trip byte-identical to v0.5.3.
+- Add a positive recipe-parsing test that round-trips a recipe with `created_by` set; add a negative test confirming an unknown field still fails the parity guard's `DisallowUnknownFields` (the schema is closed except for known fields).
 
-- `gofmt -l .` clean
-- `go build ./cmd/tpatch`
-- `go test ./...`
+#### 3. 6-skill parity-guard rollout — COORDINATED ATOMIC CHANGE
 
-### Guardrails
+The parity guard (`assets/assets_test.go`) enforces that the recipe schema documented in skill files matches the Go struct. Every skill format must be updated **in lockstep** with the Go struct change:
 
-- No scope creep into M14.2/.3/.4.
-- No changes to the recipe JSON schema (that's M14.2 — gated by the parity guard).
-- No new external Go dependencies.
-- All commits must carry the `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` trailer.
+- `assets/skills/claude/tessera-patch/SKILL.md`
+- `assets/skills/copilot/tessera-patch/SKILL.md`
+- `assets/skills/cursor/tessera-patch.mdc`
+- `assets/skills/windsurf/windsurfrules`
+- `assets/workflows/tessera-patch-generic.md`
+- `assets/prompts/copilot/tessera-patch-apply.prompt.md`
 
-### Deferred behind M14.1
+Plus `docs/agent-as-provider.md` (the canonical contract reference).
 
-- M14.2 — Apply gate + `created_by` recipe op + 6-skill parity-guard rollout (~250 LOC)
-- M14.3 — Reconcile topological traversal + composable labels + compound verdict (~500 LOC)
-- M14.4 — `status --dag`, skills analyze-phase bullet, `docs/dependencies.md`, tag v0.6.0 (~300 LOC)
+In each, document the `created_by` field as: optional, parent feature slug, ordering/label hint only, currently inert.
 
-### Registered follow-ups (unchanged from C3)
+Run `go test ./assets/...` after each skill is updated to catch drift early.
+
+#### 4. Strict scope guards
+
+DO NOT in M14.2:
+- Compose DAG labels or add the `blocked-by-parent-and-needs-resolution` compound verdict (M14.3)
+- Touch reconcile topological traversal (M14.3)
+- Add `tpatch status --dag` output (M14.4)
+- Bump version, update CHANGELOG, or tag (M14.4 supervisor task at v0.6.0)
+- Add new external Go dependencies
+
+### External reviewer guard (still applies)
+
+Any new logic must read `status.Reconcile.Outcome` for reconcile-result decisions, NEVER `artifacts/reconcile-session.json`. M14.2 doesn't touch reconcile, but `created_by` is read by M14.3's label composition — do NOT introduce any convenience that reads the session artifact in M14.2 prep.
+
+### Validation gate
+
+```
+gofmt -l .
+go build ./cmd/tpatch
+go test ./...
+go test ./assets/...   # parity guard
+go test ./internal/workflow -run 'DependencyGate|CreatedBy|Recipe' -count=1 -v
+```
+
+### Workflow
+
+1. Update CURRENT.md "Status: In Progress".
+2. Read ADR-011 (D4, D5 especially), PRD §3.2, §3.4, parity guard test.
+3. Add the recipe field + write the parity-guard-respecting tests FIRST. Run `go test ./assets/...`. (Get the parity guard green BEFORE adding the gate.)
+4. Update the 6 skill formats in lockstep with the Go struct.
+5. Implement `CheckDependencyGate` + tests. Wire into apply.
+6. Run full validation gate.
+7. 2-3 logical commits, all with the `Co-authored-by` trailer.
+8. Push to `origin/main`.
+9. Final CURRENT.md update flagging "ready for code-review sub-agent".
+
+### Out-of-band reminder for the implementer
+
+The repo's tpatch binary at root is NOT gitignored. After `go build ./cmd/tpatch`, delete the binary or build into `/bin/`. Don't commit it.
+
+### Deferred behind M14.2
+
+- M14.3 — Reconcile topo + composable labels + compound verdict (~500 LOC)
+- M14.4 — `status --dag` + skills analyze-phase bullet + `docs/dependencies.md` + tag v0.6.0 (~300 LOC)
+
+### Registered follow-ups (unchanged)
 
 - `feat-ephemeral-mode` — depends on `feat-feature-import` + `feat-delivery-modes`
 - `feat-feature-reorder` — depends on `feat-feature-dependencies` (i.e., M14)

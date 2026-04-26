@@ -183,8 +183,8 @@ Code-review verdict: APPROVED. See `docs/supervisor/LOG.md`.
 **Gated by**: `features.dependencies: true` config flag (default false) until M14.4 lands. Single atomic v0.6.0 flip — no half-shipped intermediate releases.
 
 **Scope (4 sub-milestones, ~1350 LOC total)**:
-- **M14.1** — data model + validation (~300 LOC). Dependency struct, cycle DFS, 5 validation rules.
-- **M14.2** — apply gate + `created_by` recipe op + 6-skill parity-guard rollout (~250 LOC). Coordinated atomic change to recipe schema + all 6 skill formats + `docs/agent-as-provider.md`.
+- **M14.1** — data model + validation (~300 LOC). Dependency struct, cycle DFS, 5 validation rules. ✅ APPROVED (commits `02f1ba9`, `d166281`, `7dd5941`).
+- **M14.2** — apply gate + `created_by` recipe op + 6-skill parity-guard rollout (~250 LOC). Coordinated atomic change to recipe schema + all 6 skill formats + `docs/agent-as-provider.md`. 🔨 in progress
 - **M14.3** — reconcile topological traversal + composable labels + compound verdict (~500 LOC). Kahn planner, label composition matrix, `blocked-by-parent-and-needs-resolution` compound verdict, M12 interaction.
 - **M14.4** — `status --dag`, skills analyze-phase bullet, `docs/dependencies.md`, tag v0.6.0 (~300 LOC).
 
