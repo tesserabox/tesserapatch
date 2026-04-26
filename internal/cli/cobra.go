@@ -534,6 +534,13 @@ func runApplyStarted(cmd *cobra.Command, s *store.Store, slug string) error {
 // so auto-mode can roll it into a final summary without re-running.
 func runApplyExecute(cmd *cobra.Command, s *store.Store, slug string) (workflow.RecipeExecResult, error) {
 	out := cmd.OutOrStdout()
+	// ADR-011 D4: when features_dependencies is on, hard-dependency parents
+	// must be applied or upstream_merged before the child can execute. The
+	// gate is a no-op when the flag is off, preserving v0.5.3 behaviour.
+	if err := workflow.CheckDependencyGate(s, slug); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%v\n", err)
+		return workflow.RecipeExecResult{}, err
+	}
 	recipe, err := workflow.LoadRecipe(s, slug)
 	if err != nil {
 		return workflow.RecipeExecResult{}, err
@@ -622,6 +629,13 @@ func runApplyDone(cmd *cobra.Command, s *store.Store, slug string) (patch string
 // first error; surfaces it as-is. On success, prints a consolidated
 // summary naming each phase.
 func runApplyAuto(cmd *cobra.Command, s *store.Store, slug string) error {
+	// ADR-011 D4: gate at the top so we don't even write the apply
+	// packet when hard parents are unsatisfied. Re-checked inside
+	// runApplyExecute as a defence-in-depth — same call, same result.
+	if err := workflow.CheckDependencyGate(s, slug); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%v\n", err)
+		return err
+	}
 	if err := runApplyPrepare(cmd, s, slug); err != nil {
 		return err
 	}
