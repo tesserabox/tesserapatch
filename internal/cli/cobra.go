@@ -365,9 +365,10 @@ func analyzeCmd() *cobra.Command {
 
 func defineCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "define <slug>",
-		Short: "Generate acceptance criteria and plan",
-		Args:  cobra.ExactArgs(1),
+		Use:     "define <slug>",
+		Aliases: []string{"spec"},
+		Short:   "Generate acceptance criteria and plan",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openStoreFromCmd(cmd)
 			if err != nil {

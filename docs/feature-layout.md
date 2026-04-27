@@ -76,7 +76,7 @@ These are written once or twice per feature, by named phases:
 |---|---|---|
 | `request.md` | `tpatch add` | The user's original prompt, stored verbatim for context. |
 | `analysis.md` | `tpatch analyze` | LLM's (or heuristic's) classification + risk rating. |
-| `spec.md` | `tpatch define` | Acceptance criteria + phased plan. Drives implement. |
+| `spec.md` | `tpatch define` (alias: `tpatch spec`) | Acceptance criteria + phased plan. Drives implement. |
 | `exploration.md` | `tpatch explore` | Target files + existing-code facts. Grounds implement. |
 | `apply-recipe.json` | `tpatch implement` | Operation list (create/modify) the apply flow executes. |
 | `record.md` | `tpatch record` | Human-readable summary of the last record run. |

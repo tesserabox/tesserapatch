@@ -96,6 +96,42 @@ func TestDefineHeuristic(t *testing.T) {
 	}
 }
 
+// TestSpecAliasResolvesToDefine asserts that `tpatch spec` is wired up
+// as an alias for `tpatch define`. The alias exists because the artifact
+// this phase produces is `spec.md` and users naturally reach for "spec".
+func TestSpecAliasResolvesToDefine(t *testing.T) {
+	root := buildRootCmd()
+	cmd, _, err := root.Find([]string{"spec"})
+	if err != nil {
+		t.Fatalf("Find(\"spec\"): %v", err)
+	}
+	if cmd == nil || cmd.Name() != "define" {
+		var got string
+		if cmd != nil {
+			got = cmd.Name()
+		}
+		t.Fatalf("spec alias should resolve to `define`, got %q", got)
+	}
+}
+
+// TestSpecAliasRunsDefine exercises the alias end-to-end through the
+// CLI to confirm the same RunE is invoked with identical behavior.
+func TestSpecAliasRunsDefine(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	runCmd("init", "--path", tmpDir)
+	runCmd("add", "--path", tmpDir, "Fix via alias")
+	runCmd("analyze", "--path", tmpDir, "fix-via-alias")
+
+	out, _, code := runCmd("spec", "--path", tmpDir, "fix-via-alias")
+	if code != 0 {
+		t.Fatalf("spec alias failed (code %d)", code)
+	}
+	if !strings.Contains(out, "Spec generated") {
+		t.Fatalf("expected spec generated output via alias, got %q", out)
+	}
+}
+
 func TestInitAndAddIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 
