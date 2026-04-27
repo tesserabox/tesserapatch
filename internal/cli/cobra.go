@@ -202,17 +202,47 @@ func statusCmd() *cobra.Command {
 
 			asJSON, _ := cmd.Flags().GetBool("json")
 			verbose, _ := cmd.Flags().GetBool("verbose")
+			dagMode, _ := cmd.Flags().GetBool("dag")
 			featureSlug, _ := cmd.Flags().GetString("feature")
 			if featureSlug == "" && len(args) > 0 {
 				featureSlug = args[0]
 			}
 
 			out := cmd.OutOrStdout()
+
+			// Chunk D — status-time DAG validation: re-validate the whole
+			// graph and surface cycle/dangling/kind-conflict warnings inline
+			// regardless of --dag mode (PRD §6 + §10). No-op when the flag
+			// is off so v0.5.x byte-identity is preserved.
+			var dagWarnings []string
+			if cfg.DAGEnabled() {
+				for _, verr := range store.ValidateAllFeatures(s) {
+					dagWarnings = append(dagWarnings, verr.Error())
+				}
+			}
+
+			// --dag short-circuits the dashboard render and emits the tree
+			// (or JSON) view directly.
+			if dagMode {
+				if asJSON {
+					return runStatusDAG(out, s, featureSlug, true)
+				}
+				if len(dagWarnings) > 0 {
+					for _, w := range dagWarnings {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)
+					}
+				}
+				return runStatusDAG(out, s, featureSlug, false)
+			}
+
 			if asJSON {
 				payload := map[string]any{
 					"root": s.Root, "provider": cfg.Provider,
 					"provider_configured": cfg.Provider.Configured(),
 					"features":            features,
+				}
+				if len(dagWarnings) > 0 {
+					payload["dag_warnings"] = dagWarnings
 				}
 				data, _ := json.MarshalIndent(payload, "", "  ")
 				fmt.Fprintf(out, "%s\n", data)
@@ -224,6 +254,12 @@ func statusCmd() *cobra.Command {
 				fmt.Fprintf(out, "Provider: %s (%s, model=%s)\n", cfg.Provider.Type, cfg.Provider.BaseURL, cfg.Provider.Model)
 			} else {
 				fmt.Fprintf(out, "Provider: not configured\n")
+			}
+			if len(dagWarnings) > 0 {
+				fmt.Fprintln(out, "DAG warnings:")
+				for _, w := range dagWarnings {
+					fmt.Fprintf(out, "  ⚠ %s\n", w)
+				}
 			}
 			if len(features) == 0 {
 				fmt.Fprintln(out, "Features: none")
@@ -276,6 +312,7 @@ func statusCmd() *cobra.Command {
 	cmd.Flags().Bool("json", false, "Output as JSON")
 	cmd.Flags().Bool("verbose", false, "Show all feature details")
 	cmd.Flags().String("feature", "", "Show detail for one feature")
+	wireStatusDagFlag(cmd)
 	return cmd
 }
 

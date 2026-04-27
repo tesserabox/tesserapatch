@@ -28,7 +28,7 @@ This is the first M14 sub-milestone where end users observe new behavior. Dispat
 3. `docs/ROADMAP.md` — M14.4 line + Tranche D summary
 4. M14.1, M14.2, M14.3, correctness-pass closeout entries in `docs/supervisor/LOG.md`
 
-### Scope (8 chunks — full PRD scope per supervisor decision 2026-04-26)
+### Scope (7 chunks A–G — full PRD scope per supervisor decision 2026-04-26)
 
 > **Scope decision**: M14.4 ships the **full** PRD dependency feature in v0.6.0 (Option A). The dep-management CLI (`feature deps add/remove`, `amend --depends-on`, `remove --cascade`) is part of the cut, not deferred to v0.6.1. Without it the user-facing story is "we shipped a dependency feature, but to use it edit YAML by hand," which undercuts the rollout.
 
