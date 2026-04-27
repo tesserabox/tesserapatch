@@ -36,12 +36,32 @@ Last green validation gate: M15.1 reviewer pass (see top entry of `docs/supervis
 
 While v0.6.0 + M15.1 stabilize in the field, candidate next polish items (in priority order):
 
-1. **`feat-satisfied-by-reachability`** — `git merge-base --is-ancestor` check on `satisfied_by` SHAs. Closes M14.1 deliberate limitation. ~50–80 LOC + tests. Low risk, additive validation.
+1. **`feat-satisfied-by-reachability`** — `git merge-base --is-ancestor` check on `satisfied_by` SHAs. Closes M14.1 deliberate limitation. ~210–270 LOC including tests. Low risk, additive validation. **Strongest next pick.**
 2. **`chore-gitignore-tpatch-binary`** — one-liner. Kills the recurring `tpatch` root-binary slip that has bitten the entire M14 series. Trivial.
-3. **Audit M14 follow-ups in SQL** — `feat-amend-dependent-warning`, `feat-feature-removal`, `m11-auth-store` may already be fully or partially shipped and just need SQL bookkeeping.
-4. **`v0.6.1` cut decision** — once 1+ polish items land, decide whether to batch and tag. CHANGELOG section would summarize: M15.1 inference + whatever else lands.
+3. **`chore-skill-frontmatter`** — Add YAML frontmatter to Copilot + Claude SKILL.md (loader rejects them today). Small, user-facing.
+4. **`v0.6.1` cut decision** — once 1–2 polish items land, decide whether to batch and tag.
 
-Backlog stream view: 51 pending todos in SQL after M15.1 (`feat-created-by-inference` is now `done`). See `docs/supervisor/LOG.md` for review history.
+### Newly registered from 2026-04-26 case-study sweep
+
+11 backlog items added based on field reports + parallel-recovery case study (full descriptions in SQL):
+
+| ID | Theme |
+|---|---|
+| `feat-satisfied-by-reachability` | M14.1 limitation (#1 above) |
+| `feat-define-spec-alias` | Naming polish — `define` ↔ `spec` |
+| `feat-feature-provider-overrides` | Per-feature provider/model pinning (cost control) |
+| `feat-upstream-merged-override` | Auditable manual flip with reason + commit/PR/SHA |
+| `feat-verify-command` | New `tpatch verify <slug>` — re-applicability check, distinct from `test` |
+| `feat-reconcile-fresh-branch-mode` | Codify fresh-branch recovery pattern from case studies |
+| `feat-reconcile-code-presence-verdicts` | Evidence-based reconcile (kill false-positive `upstreamed`) |
+| `feat-feature-tested-state` | New lifecycle state between `applied` and `active` |
+| `bug-test-command-shell-selection` | Stop hardcoding `sh` (Windows/WSL bug) |
+| `feat-explore-prereq-enforcement` | Loud guardrail before `implement` |
+| `feat-agent-collision-detection` | File-hash drift warnings (parallel-recovery scenarios) |
+
+Already-covered themes (do **not** re-register): `feat-record-autogen-recipe`, `bug-recipe-stale-after-manual-flow`, `feat-record-scoped-files`, `feat-prompt-anti-hallucination`, `feat-agentic-tool-use`, `feat-skill-artifact-schemas`, `feat-reconcile-metadata-refresh`, `feat-patch-compatibility`, `feat-feature-autorebase`, `feat-reconcile-reapply-action`. Standalone "remove temperature" intentionally **not** registered — fold into `feat-feature-provider-overrides` if that ships.
+
+Backlog stream view: 64 pending todos in SQL after this packet. See `docs/supervisor/LOG.md` for review history.
 
 ## Blockers
 
