@@ -91,11 +91,43 @@ Standard ADR shape (see ADR-011 for reference, ~145 lines). Decisions to lock:
 
 ## Files Changed
 
-(to be filled by implementer)
+- `docs/prds/PRD-verify-and-tested-state.md` — **NEW.** Combined PRD for `feat-verify-command` + `feat-feature-tested-state`. ~700 lines. Enumerates the 10-check verify sequence (V0–V9) with severities and primitive citations, full state-transition truth table, the consequential D2 decision (`tested` satisfies hard deps — pragmatic equivalence to `applied`), parent-state demotion hook, `--json` schema with three failure-case examples, four implementation slices (A: command shell, B: state plumbing, C: wiring, D: polish), explicit out-of-scope cross-links to `feat-reconcile-code-presence-verdicts`, `feat-reconcile-fresh-branch-mode`, and the frozen recipe-op schema.
+- `docs/adrs/ADR-012-feature-tested-state.md` — **NEW.** Locks D1–D7 with full alternatives-considered. Cross-references ADR-011 D3/D6/D9 and ADR-010 D2/D5; preserves the v0.6.1 source-truth guard verbatim.
+- `docs/handoff/CURRENT.md` — this file; Files Changed / Decisions made / Open questions for reviewer / Test Results sections updated. Active Task / Status / Process / Constraints / Context for Next Agent blocks intact.
+
+No Go file modified. No test modified. No ADR-011 edit. No reconcile-session.json read.
+
+## Decisions made
+
+The PRD records the *what* and the *why-now*; the ADR locks the architecture. Summary of locked choices (each is justified in ADR-012 with both directions argued where the dispatch demanded):
+
+1. **D1 — `tested` is a linear, sibling state of `applied`** in `FeatureState`. Not branching, not a parallel flag. Lives between `applied` and `active`. Single-string `state` field is preserved.
+2. **D2 — `tested` satisfies the hard-dep gate** (pragmatic equivalence to `applied`). `CheckDependencyGate` satisfaction set extends from `{applied, upstream_merged}` to `{applied, tested, upstream_merged}`. Both directions argued at length in PRD §3.4.4 + ADR-012 D2; B-strict (reject `tested` parents) and the alt-3 derived-label option are deliberately rejected. This is the consequential decision the dispatch flagged.
+3. **D3 — `verify` is the unique producer of `tested`.** `tpatch test`, `amend --state tested`, and implicit-`verify`-after-`apply` are all rejected (alternatives recorded). Producer expansion is reserved for `feat-tested-state-test-producer` (out of scope).
+4. **D4 — Backwards-compat: byte-identical round-trip for v0.6.1 repos that never run `verify`.** Enforced by a regression fixture (PRD §7 + ADR D4). Enum extension is additive; no field-shape change; no new file.
+5. **D5 — Forward / backward transition table.** Verify-driven edges: `applied → tested`, `tested → tested` (idempotent), `tested → applied` on block-severity FAIL. Cross-cutting demotions: `apply --mode execute on tested → applied`; `amend (recipe-touching) on tested → applied`; `amend (intent-only)` preserves `tested`; `reconcile (reapplied/upstreamed) on tested → applied` (NOT `tested`). Parent-state hook: hard-parent regression demotes direct children one step (cascade depth = 1).
+6. **D6 — Source-truth guard preserved verbatim from ADR-011 D6 / ADR-010 D5.** `tested` is persisted in `status.json` only; V9's reconcile-outcome check reads `status.Reconcile.Outcome` only, never `artifacts/reconcile-session.json` or `artifacts/resolution-session.json`. Adversarial test pins this.
+7. **D7 — Verify is read-only on the working tree.** Apply-simulation (V7) runs in a `gitutil.CreateShadow` worktree pruned via `defer PruneShadow(...)`. Per-slug shadow lock: verify refused while reconcile is in-flight (state ∈ `{reconciling, reconciling-shadow}`).
+
+Slicing decision (downstream Wave 3 dispatches) — adopted the dispatch's A/B/C/D boundaries:
+- **Slice A** — Verify command shell + V0–V9 checks; `--no-promote --no-demote` only; no enum / state plumbing yet.
+- **Slice B** — `tested` enum + state-transition plumbing (`CheckDependencyGate` extension, `apply`/`amend`/`reconcile` demotion paths, parent-state hook); no verify wiring.
+- **Slice C** — Wire verify into state transitions; `amend --state tested` rejection; `status` rendering.
+- **Slice D** — Skill bullets in 6 surfaces, parity guard, `verify --all`, CHANGELOG, polish.
+
+## Open questions for reviewer
+
+The PRD surfaces these instead of guessing — supervisor / reviewer to adjudicate:
+
+1. **Q1 (PRD §6 / §10) — V9 (`reconcile_outcome_consistent`) severity: warn (default) vs block?** PRD defaults warn so a feature with `Reconcile.Outcome = shadow-awaiting` can still be promoted to `tested` (the shadow is awaiting accept/reject, but the feature on disk is structurally intact). Counter-argument: stronger contract — `tested` implies "no pending reconcile work." If reviewer pushes block, escalate to ADR-012 amendment before Slice C lands. Default in this PRD: **warn**.
+2. **Q3 (PRD §6) — `verify --all` should skip pre-apply states?** PRD defaults to skip-with-line: features in `requested`/`analyzed`/`defined`/`implementing` are reported as "skipped: pre-apply state" and verify-all exit code reflects only post-apply slugs. Slice D detail; not blocking Slice A.
+3. **PRD §4.3 example 3 UX subtlety** — the Failure case 3 JSON shows `passed: false` on warn-only checks coexisting with `verdict: passed` and `state_after: tested`. The remediation text intentionally describes the situation, not a hypothetical block, but reviewers may judge the `passed: false` field name confusing on warn-only checks. Alternative: rename to `ok` or split into `passed_block` / `passed_warn`. Default: keep `passed` per check, with severity carrying the gating semantics.
+4. **D2 wording check** — ADR-012 D2 states "`tested` satisfies, but only because it implies `applied`-level guarantees; it gains no extra power vs. `applied` for gating purposes." Reviewer should confirm this framing reads correctly: the gate accepts both states identically, and the operator-facing semantics are "verify makes a feature stronger, but for dep-gating purposes the strengthening is invisible." If the framing reads as contradictory, propose alt wording.
+5. **Slice B parent-state hook performance** — the hook fires in the same `LoadFeatureStatus` post-processing loop that today recomputes `Reconcile.Labels` (M14.3). Reviewer to confirm this is the right insertion point and that the additional check (parent left `{applied, tested, upstream_merged}` AND child currently `tested`) is cheap enough to keep the hot path. PRD §3.4.5 documents this as "no new hot path"; if reviewer disputes, escalate.
 
 ## Test Results
 
-N/A — design-only dispatch. Implementer must not modify code; if they do, treat as a contract violation.
+N/A — design-only dispatch. No Go code, no test changes. PRD/ADR cross-references hand-validated (see PRD §10 cross-cutting impact matrix and ADR-012 References section); both documents resolve internally and against ADR-010, ADR-011, `docs/dependencies.md`, and CHANGELOG v0.6.1.
 
 ## Next Steps
 
