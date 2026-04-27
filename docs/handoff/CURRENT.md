@@ -4,7 +4,7 @@
 
 - **Task ID**: M14.4 — Status DAG view + skills/docs rollout + v0.6.0 release cutover
 - **Milestone**: M14 — Feature Dependencies / DAG (Tranche D, v0.6.0)
-- **Status**: C5 fix-pass ✅ COMPLETE — awaiting reviewer (M14.3 ✅ + correctness pass ✅ APPROVED 2026-04-26 + C5 fix-pass ✅)
+- **Status**: Awaiting user approval to dispatch (M14.3 ✅ + correctness pass ✅ + C5 fix-pass ✅ APPROVED 2026-04-26)
 - **Estimated size**: ~300 LOC + version bump + tag
 
 ### Context
@@ -183,20 +183,19 @@ C5 fix-pass: gofmt clean, `go test ./...` green, full validation gate green (wor
 
 ### Status
 
-- C5 fix-pass ✅ COMPLETE (F1 reconcile-time label suppression + F2 dry-run downgrade per PRD §4.3).
-- Awaiting C5 reviewer.
-- After C5 APPROVED: dispatch M14.4.
+- M14.1 ✅, M14.2 ✅, M14.3 ✅, correctness pass ✅, C5 fix-pass ✅ — all APPROVED, all on `origin/main`.
+- M14.4 is the user-facing cutover (flag flip + dep-CLI + skill rollout + v0.6.0 tag) — paused awaiting user green-light.
 
 ## Next Steps
 
-1. C5 reviewer.
-2. On C5 APPROVED: dispatch `m14-4-implementer` against this expanded handoff (Chunks A–G).
-3. After M14.4 implementer: `m14-4-reviewer` (expect a beefy review — 8 chunks, dep-CLI surface).
+1. **Wait for user approval** to dispatch M14.4.
+2. On green-light: dispatch `m14-4-implementer` against this expanded 8-chunk handoff (A status --dag, B flag flip, C dep-management CLI, D status-time validation, E 6-skill rollout, F docs/dependencies.md, G release cutover).
+3. After M14.4 implementer: `m14-4-reviewer` (expect a beefy review — dep-CLI surface alone is ~250 LOC + 9 tests).
 4. On APPROVED: supervisor bumps version, updates CHANGELOG, ROADMAP, archives this handoff, tags `v0.6.0`, pushes.
 
 ## Blockers
 
-None — C5 fix-pass landed.
+None. M14 is ready for the user-facing cutover as soon as user authorizes.
 
 ## Context for Next Agent
 
