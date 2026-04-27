@@ -4,9 +4,95 @@
 
 - **Task ID**: M15.1 — `created_by` auto-inference at implement time (PRD §4.3.1)
 - **Milestone**: M15 — v0.6.x stabilization & polish (post-Tranche-D)
-- **Status**: Ready to dispatch — awaiting implementer
+- **Status**: Implementation complete — awaiting reviewer
 - **Assigned**: 2026-04-26
 - **Estimated size**: ~120–180 LOC + tests; one logical commit
+
+## Why this is next
+
+v0.6.0 just shipped `created_by` as a real apply-time gate (M14.2 schema + correctness pass + C5 fix-pass). First-time users will hit `ErrPathCreatedByParent` when their recipe omits the annotation. The PRD already specified an advisory inference heuristic at implement time (§4.3.1, line 381 of `docs/prds/PRD-feature-dependencies.md`); shipping it now closes the user-experience loop while users are field-testing v0.6.0.
+
+This is **stabilization-tier polish** — small, additive, advisory-only. Not a milestone tranche.
+
+## Files Changed
+
+- `internal/workflow/created_by_inference.go` (new, ~210 LOC) — advisory matcher; `WithDisableCreatedByInference` ctx helper; `inferCreatedBy` scanner; `pristineHasSearch` working-tree probe.
+- `internal/workflow/created_by_inference_test.go` (new, ~270 LOC) — all 8 tests from the dispatch contract.
+- `internal/workflow/implement.go` — call `inferCreatedBy(ctx, s, slug, recipe)` between recipe parse and recipe write; failures degrade to a warning so persistence is never blocked.
+- `internal/cli/cobra.go` — `--no-created-by-infer` flag on `implement` command, plumbed via `workflow.WithDisableCreatedByInference`.
+
+The created-by **gate** (`internal/workflow/created_by_gate.go`) was NOT touched — apply-time concern, separate file, separate sentinel.
+
+## Test Results
+
+```
+$ gofmt -l .
+(no output)
+
+$ go build ./cmd/tpatch && rm -f tpatch
+BUILD OK
+
+$ go test ./...
+ok  	github.com/tesseracode/tesserapatch/assets	0.362s
+?   	github.com/tesseracode/tesserapatch/cmd/tpatch	[no test files]
+ok  	github.com/tesseracode/tesserapatch/internal/cli	4.007s
+ok  	github.com/tesseracode/tesserapatch/internal/gitutil	(cached)
+ok  	github.com/tesseracode/tesserapatch/internal/provider	(cached)
+ok  	github.com/tesseracode/tesserapatch/internal/safety	(cached)
+ok  	github.com/tesseracode/tesserapatch/internal/store	(cached)
+ok  	github.com/tesseracode/tesserapatch/internal/workflow	8.567s
+
+$ go test ./internal/workflow -run 'CreatedByInference|CreatedByGate' -count=1 -v
+--- PASS: TestCreatedByGate_FlagOff_NoOp (0.01s)
+--- PASS: TestCreatedByGate_HardParent_TargetMissing_ErrPathCreatedByParent (0.01s)
+--- PASS: TestCreatedByGate_DryRun_HardParent_TargetMissing_DowngradesToWarning (0.01s)
+--- PASS: TestCreatedByGate_Execute_HardParent_TargetMissing_ReturnsErr (0.01s)
+--- PASS: TestCreatedByGate_HardParent_TargetExists_NoError (0.01s)
+--- PASS: TestCreatedByGate_SoftParent_TargetMissing_FallsThroughWithWarning (0.01s)
+--- PASS: TestCreatedByGate_ParentNotInDependsOn_RecipeRejected (0.01s)
+--- PASS: TestCreatedByGate_ParentUpstreamMerged_TargetExists_NoError (0.01s)
+--- PASS: TestCreatedByGate_AppliesToReplaceAndAppend (0.01s)
+--- PASS: TestCreatedByInference_SuggestsHardParent (0.01s)
+--- PASS: TestCreatedByInference_RespectsExistingAnnotation (0.01s)
+--- PASS: TestCreatedByInference_AmbiguousMultipleParents (0.01s)
+--- PASS: TestCreatedByInference_SkipsSoftParents (0.01s)
+--- PASS: TestCreatedByInference_OptOut (0.01s)
+--- PASS: TestCreatedByInference_FlagOff (0.01s)
+--- PASS: TestCreatedByInference_PristineHasSearch_NoSuggestion (0.01s)
+--- PASS: TestCreatedByInference_NoMatchSilent (0.01s)
+PASS
+ok  	github.com/tesseracode/tesserapatch/internal/workflow	0.535s
+
+$ go test ./assets/... -count=1
+ok  	github.com/tesseracode/tesserapatch/assets	0.334s
+```
+
+All 9 pre-existing CreatedByGate tests + all 8 new CreatedByInference tests green. Full suite green.
+
+## Deviations from dispatch contract
+
+None. The advisory output, opt-out flag, scope guards (replace-in-file only, hard parents only, non-transitive, no recipe mutation, advisory stderr only, flag-off byte identity), and 8-test layout all match the handoff verbatim.
+
+One minor implementation note for the reviewer: the inference call inside `RunImplement` is wrapped in a `if ierr != nil { warn }` guard rather than a hard-return. Rationale: a transient error in the advisory layer must not block recipe persistence — the apply-time gate is the authoritative enforcement point and would catch any real downstream issue. The dispatch contract didn't pin this either way; this is the conservative choice.
+
+## Next Steps
+
+1. Reviewer dispatch.
+2. On APPROVED: archive this handoff, decide on `v0.6.1` cut.
+
+## Blockers
+
+None.
+
+## Context for Next Agent
+
+- The inference scanner is intentionally cheap: it only loads the child status when at least one candidate op exists (fast-path skip), reads each parent's `post-apply.patch` once and caches the bytes for the whole walk, and short-circuits as soon as the pristine working tree contains the Search bytes.
+- `ctxKeyDisableCreatedByInfer` is declared with explicit value `1` to sit alongside `ctxKeyDisableRetry = iota = 0` in `retry.go` — same `contextKey` private type. If we add a third workflow-context flag, switch them all to a `const ( ... iota )` block to avoid drift.
+- `--no-created-by-infer` is `implement`-only by design (PRD §4.3.1 places inference there, the gate is a separate CLI surface on `apply`). Do not promote.
+- Pending follow-ups (separate backlog, NOT in scope here):
+  - `feat-satisfied-by-reachability` — git merge-base check on `satisfied_by` SHAs
+  - v0.6.0 field-feedback issues if any surface
+  - `--auto-apply-inferred` — if operators ask for it, the inference layer is now structured to support recipe mutation as a follow-up.
 
 ## Why this is next
 
