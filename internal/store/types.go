@@ -117,6 +117,56 @@ type FeatureStatus struct {
 	// RunReconcile invocation; status.json is the source of current truth
 	// post-accept (see ADR-010 D5).
 	DependsOn []Dependency `json:"depends_on,omitempty"`
+
+	// Verify is the freshness-overlay sub-record written by the explicit
+	// `tpatch verify` verb (ADR-013 D1 / D5). It is NOT a lifecycle state;
+	// `FeatureState` is never mutated by verify. The pointer is
+	// `omitempty`-marshalled so v0.6.1 fixtures that never run verify
+	// round-trip byte-identical (ADR-013 D4).
+	//
+	// The persisted record carries the minimum needed to derive the four
+	// freshness labels (`never-verified`, `verified-fresh`,
+	// `verified-stale`, `verify-failed`) at read time in `ComposeLabels`
+	// (Slice B); it deliberately does NOT persist the per-check array —
+	// the full 10-check report is emitted on `tpatch verify --json`
+	// stdout only (Reviewer Note 1, M15-W3 APPROVED WITH NOTES at 3c122aa).
+	//
+	// Read paths must NOT mutate this field. Only the `verify` and
+	// `amend` (recipe-touching) verbs may rewrite it (ADR-013 D3).
+	Verify *VerifyRecord `json:"verify,omitempty"`
+}
+
+// VerifyRecord is the persisted freshness overlay produced by
+// `tpatch verify <slug>` (ADR-013 D1). Slice A populates the minimal field
+// set; the full per-check array (`VerifyCheckResult`) is emitted only on
+// `--json` stdout, never written to status.json (Reviewer Note 1).
+//
+// Hash fields are SHA-256 hex of the canonical bytes of `apply-recipe.json`
+// and `artifacts/post-apply.patch` respectively at verify time. An empty
+// string means the file was absent at verify time — see Reviewer Note 2
+// for the absent-recipe contract.
+//
+// `ParentSnapshot` is keyed by parent slug; values are the parent's
+// `FeatureState` literal at verify time. Slice B's freshness derivation
+// reads this against current parent state to flip `verified-fresh` →
+// `verified-stale` at READ time without rewriting status.json.
+type VerifyRecord struct {
+	VerifiedAt         string                  `json:"verified_at"`
+	Passed             bool                    `json:"passed"`
+	RecipeHashAtVerify string                  `json:"recipe_hash_at_verify,omitempty"`
+	PatchHashAtVerify  string                  `json:"patch_hash_at_verify,omitempty"`
+	ParentSnapshot     map[string]FeatureState `json:"parent_snapshot,omitempty"`
+}
+
+// VerifyCheckResult is the per-check entry in the in-memory `--json`
+// report. NOT persisted to status.json (see VerifyRecord doc).
+type VerifyCheckResult struct {
+	ID          string `json:"id"`
+	Severity    string `json:"severity"` // "block" | "block-abort" | "warn"
+	Passed      bool   `json:"passed"`
+	Skipped     bool   `json:"skipped,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Remediation string `json:"remediation,omitempty"`
 }
 
 // Dependency declares a relationship from a child feature to a parent feature

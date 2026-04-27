@@ -149,3 +149,83 @@ func containsLiteral(haystack, needle string) bool {
 	}
 	return false
 }
+
+// TestRoundtrip_VerifyOmitemptyByteIdentity guards that adding the
+// Verify *VerifyRecord field on FeatureStatus does NOT regress the
+// pre-M14 byte-identity contract for v0.6.1 fixtures that never run
+// `tpatch verify` (ADR-013 D4).
+func TestRoundtrip_VerifyOmitemptyByteIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	s, err := Init(tmp)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, err := s.AddFeature(AddFeatureInput{Title: "demo-feature", Slug: "demo-feature", Request: "x"}); err != nil {
+		t.Fatalf("AddFeature: %v", err)
+	}
+	statusPath := s.featureStatusPath("demo-feature")
+	if err := os.WriteFile(statusPath, []byte(preM14StatusFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.LoadFeatureStatus("demo-feature")
+	if err != nil {
+		t.Fatalf("LoadFeatureStatus: %v", err)
+	}
+	if loaded.Verify != nil {
+		t.Fatalf("nil-Verify expected on v0.6.1 fixture, got %+v", loaded.Verify)
+	}
+	if err := s.SaveFeatureStatus(loaded); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != preM14StatusFixture {
+		t.Fatalf("verify omitempty broke byte-identity round-trip.\nwant:\n%s\ngot:\n%s", preM14StatusFixture, string(got))
+	}
+	if containsLiteral(string(got), "verify") {
+		t.Fatalf("nil Verify must not appear in marshalled JSON, got:\n%s", string(got))
+	}
+}
+
+// TestRoundtrip_VerifyRecordPreserved checks that a populated Verify
+// record survives a full save/load cycle without distortion.
+func TestRoundtrip_VerifyRecordPreserved(t *testing.T) {
+	tmp := t.TempDir()
+	s, err := Init(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddFeature(AddFeatureInput{Title: "demo", Slug: "demo", Request: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	rec := VerifyRecord{
+		VerifiedAt:         "2026-04-27T18:30:11Z",
+		Passed:             true,
+		RecipeHashAtVerify: "deadbeef",
+		PatchHashAtVerify:  "cafef00d",
+		ParentSnapshot:     map[string]FeatureState{"parent-a": StateApplied},
+	}
+	if err := s.WriteVerifyRecord("demo", rec); err != nil {
+		t.Fatalf("WriteVerifyRecord: %v", err)
+	}
+	loaded, err := s.LoadFeatureStatus("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Verify == nil {
+		t.Fatal("expected Verify populated")
+	}
+	if !reflect.DeepEqual(*loaded.Verify, rec) {
+		t.Fatalf("round-trip mismatch:\n want %#v\n got  %#v", rec, *loaded.Verify)
+	}
+	if loaded.LastCommand != "verify" {
+		t.Errorf("LastCommand = %q, want \"verify\"", loaded.LastCommand)
+	}
+	if loaded.State != StateRequested {
+		// AddFeature sets state=requested; WriteVerifyRecord must NOT
+		// mutate it (ADR-013 D1).
+		t.Errorf("state mutated by WriteVerifyRecord: got %s", loaded.State)
+	}
+}

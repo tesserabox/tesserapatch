@@ -78,6 +78,7 @@ tpatch status
 - `tpatch config show|set` — Manage config
 - `tpatch cycle <slug>` — Full lifecycle in one command (add `--interactive` for prompts)
 - `tpatch test <slug>` — Run the configured `test_command` and record the result
+- `tpatch verify <slug>` — Run integrity checks against a feature's recipe and dependencies (EXPERIMENTAL — Slice A: V0/V1/V2 only; full check set in later slices)
 - `tpatch next <slug>` — Emit the next action (use `--format harness-json` for structured output)
 
 ## Reconciliation

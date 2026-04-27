@@ -59,6 +59,7 @@ Never skip a phase. Never go backwards without `tpatch reconcile`.
 - `tpatch config show|set` — Manage config
 - `tpatch cycle <slug>` — Run analyze→define→explore→implement→apply→record in sequence (batch or `--interactive`)
 - `tpatch test <slug>` — Run the configured `test_command` and record the outcome
+- `tpatch verify <slug>` — Run integrity checks against a feature's recipe and dependencies (EXPERIMENTAL — Slice A: V0/V1/V2 only; full check set in later slices)
 - `tpatch next <slug>` — Emit the next action for a feature (`--format harness-json` for structured consumption)
 
 ## Lifecycle

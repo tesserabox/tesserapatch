@@ -5,7 +5,7 @@
 - **Task ID**: M15-W3-SLICE-A
 - **Milestone**: M15 → Wave 3 (lifecycle / reconcile semantics tranche) — **Slice A implementation**
 - **Description**: Implement the Slice A surface of the approved freshness-overlay design: `tpatch verify <slug>` cobra shell with four flags, V0/V1/V2 real check implementations, V3–V9 stubs (the full 10-check array still appears in the report so the shape is reviewable now), `Verify *VerifyRecord` field on `FeatureStatus` with `omitempty`, and minimal EXPERIMENTAL skill stubs to keep the parity guard green.
-- **Status**: In Progress
+- **Status**: Awaiting external review
 - **Assigned**: 2026-04-27
 
 ## Binding context
@@ -28,42 +28,88 @@
 
 ## Session Summary
 
-(populated as work proceeds)
+- Added the `Verify *VerifyRecord` field to `FeatureStatus` (`internal/store/types.go`) with `omitempty`. Persisted record carries only `verified_at`, `passed`, `recipe_hash_at_verify`, `patch_hash_at_verify`, `parent_snapshot` — Note 1 disposition: dropped per-check array from persistence (stdout-only).
+- Added the dedicated explicit-write entry point `Store.WriteVerifyRecord` (`internal/store/store.go`). Read paths (`LoadFeatureStatus`, `MarkFeatureState`, etc.) are unchanged.
+- New `internal/workflow/verify.go` with `RunVerify`, real V0/V1/V2 implementations, V3–V9 stubs (`passed:true, skipped:true, reason:"not yet implemented (Slice C)"`), and the in-memory 10-check report builder.
+- New `internal/cli/verify.go` registering `tpatch verify <slug>` with `--json`, `--quiet`, `--no-write`. The `--path` persistent flag is inherited from root (matching `apply` / `record` / `status`).
+- All six skill surfaces (claude, copilot, copilot-prompt, cursor, windsurf, generic) gain a single one-sentence EXPERIMENTAL bullet — Note 3 disposition. Full skill copy is deferred to Slice D per PRD §4.4.
+- Tests: V0 abort, V1 pass + fail (missing + empty spec), V2 pass + fail (malformed JSON, missing op target) + absent-recipe Note 2 contract, `--no-write` non-persistence, `--json` shape with all 10 IDs in order, stub-reason naming a future slice. Plus two store-level round-trip tests guarding the `omitempty` byte-identity contract and the populated-record round-trip.
+- Apply gate untouched. `composeLabelsFromStatus` untouched. No closure replay (Slice C). No `--all` (Slice D).
 
 ## Current State
 
-(populated as work proceeds)
+- Slice A surface complete and gated by full test suite.
+- The four derived freshness labels (`never-verified` / `verified-fresh` / `verified-stale` / `verify-failed`) are NOT yet wired into `tpatch status` / `--dag` / `--json` — that is Slice B's scope.
+- V7/V8 are stubs; closure-replay primitive lands in Slice C.
+- The full skill copy from PRD §4.4 is not in the skill files yet — only the minimal one-liner that keeps the parity guard green.
 
 ## Files Changed
 
-(populated as work proceeds)
+- `docs/handoff/CURRENT.md` (this file)
+- `docs/handoff/HISTORY.md` (Phase-1 archive of M15-W3-REDESIGN)
+- `docs/prds/PRD-verify-freshness.md` (Phase-1: status line)
+- `internal/store/types.go` (new `Verify` field + `VerifyRecord`/`VerifyCheckResult` types)
+- `internal/store/store.go` (new `WriteVerifyRecord` writer)
+- `internal/store/roundtrip_test.go` (two new round-trip tests)
+- `internal/cli/cobra.go` (registers `verifyCmd`)
+- `internal/cli/verify.go` (new — cobra shell)
+- `internal/workflow/verify.go` (new — `RunVerify` + checks + helpers)
+- `internal/workflow/verify_test.go` (new — eleven test cases)
+- `assets/skills/claude/tessera-patch/SKILL.md`
+- `assets/skills/copilot/tessera-patch/SKILL.md`
+- `assets/prompts/copilot/tessera-patch-apply.prompt.md`
+- `assets/skills/cursor/tessera-patch.mdc`
+- `assets/skills/windsurf/windsurfrules`
+- `assets/workflows/tessera-patch-generic.md`
 
 ## Test Results
 
-(populated as work proceeds)
+```
+$ gofmt -l .
+(empty)
 
-## Next Steps
+$ go test ./...
+ok  	github.com/tesseracode/tesserapatch/assets	1.688s
+?   	github.com/tesseracode/tesserapatch/cmd/tpatch	[no test files]
+ok  	github.com/tesseracode/tesserapatch/internal/cli	9.645s
+ok  	github.com/tesseracode/tesserapatch/internal/gitutil	(cached)
+ok  	github.com/tesseracode/tesserapatch/internal/provider	(cached)
+ok  	github.com/tesseracode/tesserapatch/internal/safety	(cached)
+ok  	github.com/tesseracode/tesserapatch/internal/store	2.354s
+ok  	github.com/tesseracode/tesserapatch/internal/workflow	18.165s
 
-1. Add `VerifyRecord` + `VerifyCheckResult` to `internal/store/types.go`. Persisted record carries the minimal field set per Note 1.
-2. Add `Verify *VerifyRecord` field to `FeatureStatus` with `omitempty`.
-3. Add `internal/workflow/verify.go` with `RunVerify(...) (*VerifyReport, error)`, V0/V1/V2 real implementations, V3–V9 stubs, full 10-check JSON report builder, parent-snapshot derivation.
-4. Add `verifyCmd` to `internal/cli/cobra.go` (style: `applyCmd` / `recordCmd`).
-5. Add minimal EXPERIMENTAL `tpatch verify` line to all six skill surfaces.
-6. Add tests: V0/V1/V2 pass+fail, V2 absent recipe, `--no-write` honoured, `--json` shape, omitempty round-trip.
-7. Run `gofmt -l . && go test ./... && go build ./cmd/tpatch && rm -f tpatch`.
-8. Update CURRENT.md with Slice B/C/D remaining-work bullets and `Status: Awaiting external review`.
+$ go build ./cmd/tpatch
+(success; binary removed with `rm -f tpatch` after build)
+```
+
+## Reviewer-note dispositions (recorded for the external review)
+
+- **Note 1 (CheckResults persistence)**: **Resolved by dropping** the per-check array from the persisted record. The full 10-check array is built in-memory by `RunVerify` and emitted on `--json` stdout only. Persisted record matches the brief's minimal field set (`verified_at`, `passed`, `recipe_hash_at_verify`, `patch_hash_at_verify`, `parent_snapshot`).
+- **Note 2 (V2 absent recipe)**: An absent `apply-recipe.json` makes both V2 sub-checks (`recipe_parses` and `recipe_op_targets_resolve`) emit `passed: true, skipped: true, reason: "no apply-recipe.json (legacy / pre-autogen-era feature)"`. Verdict stays `passed`; no false-fail; covered by `TestRunVerify_V2_AbsentRecipe_SkippedNotFailed`.
+- **Note 3 (parity guard)**: Minimal one-sentence EXPERIMENTAL stubs added to all six skill surfaces. The parity guard's `requiredCommands` array was NOT extended to add `tpatch verify`; the guard's existing list still passes byte-for-byte. Full §4.4 skill copy remains Slice D's deliverable.
+
+## What remains for Slices B / C / D
+
+- **Slice B**: extend `ReconcileLabel` vocabulary with `LabelNeverVerified` / `LabelVerifiedFresh` / `LabelVerifiedStale` / `LabelVerifyFailed`; wire freshness derivation into `composeLabelsFromStatus` per PRD §3.4.2 (pure function, no writes); `tpatch status` and `--json` rendering; `tpatch amend (recipe-touching)` invalidates `Verify.Passed`; reject `tpatch amend --state tested`.
+- **Slice C**: V3 (created_by semantics), V4 (`store.ValidateDependencies`), V5 (`gitutil.IsAncestor`), V6 (warn), V7+V8 hard-parent topological closure replay + target recipe replay + patch `--check`, V9 (`status.Reconcile.Outcome` consistency). Replace stub records with real check results in `RunVerify`.
+- **Slice D**: `tpatch verify --all` (topo-ordered aggregate, pre-apply skips per Q2), full skill paragraph from PRD §4.4 across all six surfaces, parity-guard anchor extension (if needed for the new copy), `docs/dependencies.md` cross-link, CHANGELOG v0.6.2 entry.
+
+## Open questions for the reviewer
+
+None — Slice A scope was precise. Two minor implementation choices flagged for the reviewer's eye:
+
+1. **Skill stub form**: I added one bullet under each skill's command-list section rather than a dedicated paragraph. Slice D's full §4.4 paragraph will replace these stubs cleanly. Reviewer may prefer a different anchor; trivial to relocate.
+2. **`computeVerdict` semantics in Slice A**: warn-severity failures do not flip the verdict. The PRD §6 / Q1 records this as the binding rule for V9; Slice A's only warn-severity stubs are V6 and V9 stubs (both currently `passed: true`), so the rule is not exercised yet but already coded.
 
 ## Blockers
 
-None — Slice A scope is precisely defined by PRD §9 + reviewer notes.
+None. Awaiting external review.
 
 ## Context for Next Agent
 
-- Read order if you arrive cold: PRD-verify-freshness.md §3.4 + §4 + §9 (Slice A row), ADR-013 D1/D4/D5/D7, then `docs/supervisor/LOG.md` top entry for the three notes.
-- The stub semantics for V3–V9 are: `passed: true, skipped: true, reason: "not yet implemented (Slice <X>)"`. The full 10-check array still emits in `--json`; only the persisted record is trimmed.
-- Persisted record minimal field set is the disposition for Note 1. The full check array round-trips via stdout, never through `status.json`.
-- Closure-replay primitive (V7/V8) is Slice C; Slice A's V7/V8 are stubs.
-- `composeLabelsFromStatus` is **not** extended in this slice (Slice B). The four derived freshness labels (`never-verified` / `verified-fresh` / `verified-stale` / `verify-failed`) are not wired into `tpatch status` yet.
+- Read order: PRD-verify-freshness.md §3.4 + §4 + §9 (Slice A row), ADR-013 D1/D4/D5/D7, then `docs/supervisor/LOG.md` top entry.
+- The persisted record's minimal field set is locked. Slice B's `composeLabelsFromStatus` extension reads `Verify.RecipeHashAtVerify`, `Verify.PatchHashAtVerify`, `Verify.ParentSnapshot`, `Verify.Passed` — all present.
+- The full 10-check report shape is exercised by `TestRunVerify_JSONShape`. Slice C must keep the order + IDs stable when filling in real implementations for V3–V9.
+- `tpatch verify` lives on the explicit-write side. Do NOT add the field to a read path. ADR-013 D5 + Reviewer Note 1.
 - The `tpatch` root binary is not gitignored. `rm -f tpatch` after `go build`.
 - Every commit must carry the `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` trailer.
-- This task ends with `Status: Awaiting external review` — do **not** self-approve. Supervisor + user gate before push.

@@ -270,6 +270,28 @@ func (s *Store) MarkFeatureState(slug string, state FeatureState, command, notes
 	return s.SaveFeatureStatus(status)
 }
 
+// WriteVerifyRecord persists the freshness overlay produced by the
+// explicit `tpatch verify` verb (ADR-013 D1 / D5). This is the ONLY
+// store-level entry point for setting `FeatureStatus.Verify`; read paths
+// (`LoadFeatureStatus`, `ComposeLabels`, status rendering) must NOT call
+// it. Slice A: `tpatch verify` is the sole caller; Slice B will add
+// `tpatch amend` (recipe-touching) as the second producer.
+//
+// `LastCommand = "verify"` and `UpdatedAt` are bumped via SaveFeatureStatus.
+// `FeatureState` is left untouched — verify is a freshness overlay, not a
+// lifecycle transition (ADR-013 D1).
+func (s *Store) WriteVerifyRecord(slug string, record VerifyRecord) error {
+	status, err := s.LoadFeatureStatus(slug)
+	if err != nil {
+		return err
+	}
+	rec := record
+	status.Verify = &rec
+	status.LastCommand = "verify"
+	status.UpdatedAt = nowStamp()
+	return s.SaveFeatureStatus(status)
+}
+
 // ReadFeatureFile reads a named file from the feature directory.
 func (s *Store) ReadFeatureFile(slug, name string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(s.featureDir(slug), name))

@@ -299,6 +299,7 @@ When they disagree — e.g. the recipe's `replace-in-file` can no longer find it
 | `tpatch config show\|set` | Manage configuration |
 | `tpatch cycle <slug>` | Run analyze→define→explore→implement→apply→record in sequence. Add `--interactive` to pause between phases |
 | `tpatch test <slug>` | Run the configured `test_command` and record the pass/fail outcome |
+| `tpatch verify <slug>` | Run integrity checks against a feature's recipe and dependencies (EXPERIMENTAL — Slice A: V0/V1/V2 only; full check set in later slices) |
 | `tpatch next <slug>` | Emit the next logical action. `--format harness-json` for structured JSON |
 
 ## .tpatch/ Structure

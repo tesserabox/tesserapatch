@@ -62,7 +62,7 @@ Never skip a phase. Never go backwards without `tpatch reconcile`.
 
 ## Available Commands
 
-`tpatch init`, `tpatch add`, `tpatch status`, `tpatch analyze`, `tpatch define`, `tpatch explore`, `tpatch implement`, `tpatch apply`, `tpatch record`, `tpatch reconcile`, `tpatch provider check`, `tpatch config show|set`, `tpatch cycle`, `tpatch test`, `tpatch next`
+`tpatch init`, `tpatch add`, `tpatch status`, `tpatch analyze`, `tpatch define`, `tpatch explore`, `tpatch implement`, `tpatch apply`, `tpatch record`, `tpatch reconcile`, `tpatch provider check`, `tpatch config show|set`, `tpatch cycle`, `tpatch test`, `tpatch verify` (EXPERIMENTAL — Slice A: V0/V1/V2 only), `tpatch next`
 
 ## You Are the Provider
 
