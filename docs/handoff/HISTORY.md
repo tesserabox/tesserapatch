@@ -1,3 +1,119 @@
+# 2026-04-27 — M15-W3-DESIGN — Wave 3 design REOPENED + SUPERSEDED
+
+**Outcome**: The previously approved Wave 3 design (commits `fdc6e70` + `90375c9` + `e6473ea` + `8c3d72e`) is **SUPERSEDED**. An external re-review of `8c3d72e` identified two structural problems (F1: verify shadows ignored hard-parent closure replay; F4: lifecycle/freshness conflation routed read-path mutation through `LoadFeatureStatus`) plus two CURRENT.md drift findings (F2: invented `Tested *TestedRecord` field; F3: Slice A boundary misaligned). The supervisor reopened Wave 3 with a binding redesign: a Git-like freshness overlay model.
+
+## Successor design (active as of this archive)
+
+- **PRD**: `docs/prds/PRD-verify-freshness.md` (new file, supersedes `PRD-verify-and-tested-state.md`).
+- **ADR**: `docs/adrs/ADR-013-verify-freshness-overlay.md` (new file, supersedes ADR-012 in full).
+- **Predecessor docs preserved**: `PRD-verify-and-tested-state.md` and `ADR-012-feature-tested-state.md` carry SUPERSEDED banners pointing to the successors. They remain in the tree as historical record.
+
+## Why supersession (not silent in-place revision)
+
+The first-revision pass (`e6473ea`) corrected an internal contradiction inside an approved design. The second pass changes the load-bearing model itself: `tested` was a lifecycle state; under the redesign it does not exist as a state. Mutating ADR-012 into the opposite of what was approved would have erased the audit trail. New successor files preserve "this is what we approved at v0.6.1, this is what we adopted instead, this is why."
+
+## Findings the redesign addresses
+
+- **F1 (CRITICAL)** — V7/V8 shadow now replays the target's hard-parent topological closure (ordered by `store.TopologicalOrder` over the hard-only sub-DAG; `upstream_merged` parents skipped; fail-fast with `failed_at: "parent-replay"` on first non-replayable parent or replay failure) before applying the target's recipe.
+- **F2 (HIGH)** — invented `Tested *TestedRecord` field replaced by `Verify` sub-record on `FeatureStatus`, locked in ADR-013 D1 with `omitempty`-marshalled fields.
+- **F3 (MEDIUM)** — Slice A scope corrected: cobra command shell + V0–V2 + freshness writer skeleton. No `--all`, no `--shadow`, no skill anchor regen in Slice A.
+- **F4 (CRITICAL)** — lifecycle and freshness fully separated. `FeatureState` enum unchanged. `verify` writes a freshness overlay; parent regressions produce derived stale labels at read time only; no read path mutates `.tpatch/`.
+
+## Implementer / reviewer / revision timeline
+
+- `fdc6e70` — first design implementer: PRD + ADR-012 (lifecycle-state model).
+- `90375c9` — first reviewer: NEEDS REVISION on D2 PRD/ADR contradiction.
+- `e6473ea` — first revision: PRD §3.4.4 aligned with ADR-012 D2.
+- `8c3d72e` — supervisor approval, archive, idle.
+- External re-review (user-mediated, 2026-04-27): findings F1–F4.
+- `m15-w3-design-revision-2` (background sub-agent): rewrote PRD + ADR-012 + CURRENT.md in place (commit `e8fde60`, locally only).
+- Supervisor reorganization (this commit): commit `e8fde60` replayed into successor file structure (preserves audit trail per user's supersession brief). New PRD-verify-freshness.md + ADR-013, originals carry SUPERSEDED banners, prior idle CURRENT archived here.
+
+## Process lessons reinforced
+
+- **Implementer self-reviews remain status-only signals.** The first reviewer caught one finding; the external re-review caught four. Sub-agent verdicts are inputs to supervisor judgement, never approval signals.
+- **Audit trail beats silent rewrites.** Replacing an approved ADR/PRD in place can read as "the design was always this" to a future agent. Successor files with explicit supersession banners + a supersession map preserve "this was the trade-off we examined and rejected."
+- **Read paths must not mutate persisted state.** This is now an explicit binding constraint on every Wave 3 design choice (ADR-013 D5).
+
+## Idle CURRENT.md state being archived
+
+The CURRENT.md from `8c3d72e` (idle, claiming the design was approved) is preserved verbatim below for historical record. It contained two drift errors (F2 + F3) that contributed to the reopening.
+
+```
+# Current Handoff
+
+## Active Task
+
+- **Task ID**: _idle — M15 Wave 3 design APPROVED, awaiting Slice A code dispatch_
+- **Milestone**: M15 → Wave 3 (lifecycle / reconcile semantics tranche)
+- **Status**: Idle
+- **Assigned**: 2026-04-27
+
+## Session Summary
+
+M15-W3-DESIGN approved after one revision cycle. PRD + ADR-012 locked; archived to `docs/handoff/HISTORY.md` (top entry, 2026-04-27).
+
+The design covers `feat-verify-command` + `feat-feature-tested-state` in a single combined PRD because the two share contract surface — most notably D2 (does `tested` satisfy hard dependencies?), which is now locked: **yes, `tested` is a strict superset of `applied`**.
+
+The PRD slices the work into four independently-dispatchable code waves (Slice A: verify command shell; Slice B: tested state plumbing; Slice C: verify produces tested; Slice D: --all / JSON / docs). Slice A is the next dispatch.
+
+## Locked design contract (binding for all Wave 3 code dispatches)
+
+- **D1**: `tested` is a linear forward state from `applied`. Single-direction extension to `FeatureState` enum.
+- **D2**: `tested` satisfies the hard-dep gate. Implementation is one switch arm: extend `case StateApplied:` in `internal/workflow/dependency_gate.go:79–101` to also match `StateTested`.
+- **D3**: `verify` is the sole producer of `tested` in v0.6.2. `test` is unchanged; `amend` does not produce `tested`.
+- **D4**: New `Tested *TestedRecord` field on the feature status block carries `omitempty` so v0.6.1 repos round-trip byte-identical until verify is run.
+- **D5**: Transitions: `applied + verify PASS → tested`; `tested + verify PASS → tested` (idempotent); `tested + verify FAIL (block-severity) → applied`; `tested + amend (recipe-touching) → applied`; `tested + amend (intent-only) → tested` (preserved). Demotion does NOT cascade to children.
+- **D6**: `tested` lives in `status.json`. Never inferred from `artifacts/reconcile-session.json`. Reuses ADR-011 D6 source-truth guard verbatim.
+- **D7**: `verify` is read-only on the working tree. Apply-simulation uses the existing shadow workspace plumbing.
+
+## Reviewer adjudications (binding inputs to Slice A's contract)
+
+- **Q1 (V9 severity)**: warn (default).
+- **Q2 (`verify --all` skip)**: pre-apply slugs are skipped with a `"skipped: pre-apply state"` reason line in the JSON output, not a failure.
+- **Q3 (`passed` field name)**: retained. `severity` carries gating; `passed` carries pass/fail intent.
+- **Q4 (D2 wording)**: resolved by `e6473ea` revision pass.
+- **Q5 (parent-state hook)**: inserted into the existing M14.3 label-recomputation loop. No new hot path.
+
+## Files Changed
+
+_No active task; nothing pending._
+
+Last work: see `docs/handoff/HISTORY.md` 2026-04-27 entry for the full design dispatch + revision archive (commits `fdc6e70`, `90375c9`, `e6473ea`).
+
+## Test Results
+
+N/A — design-only phase. The next code dispatch (Slice A) will run the standard `go test ./... && go build ./cmd/tpatch && gofmt -l .` gate.
+
+## Next Steps
+
+1. **Refresh backlog mirror** to reflect Slice A as the next active code item:
+   ```
+   chmod 644 .tpatch-backlog/backlog.db
+   sqlite3 $SESSION_DB ".backup '.tpatch-backlog/backlog.db'"
+   chmod 444 .tpatch-backlog/backlog.db
+   ```
+2. **Dispatch `m15-w3-slice-a-implementer`** (general-purpose, background) with a tight per-slice contract:
+   - **Scope**: verify command shell — register `tpatch verify <slug>` cobra command + `--json`, `--all`, `--shadow` flags + skeleton check runner that returns the new `VerifyReport` struct shape from PRD §4.2. Implement V0–V2 (cheap structural checks: spec.md present, exploration.md targets exist, recipe parses). Stub V3–V9 with TODO + clean-up sentinel.
+   - **Out of scope for Slice A**: the actual `tested` state plumbing (Slice B), recipe re-apply against shadow (Slice C), `--all` orchestration (Slice D).
+   - **Constraints**: PRD §4.2 JSON shape is binding; cobra wiring follows the existing `applyCmd` / `recordCmd` pattern; skill anchors must be regenerated to mention `verify` (parity guard will fail otherwise).
+3. **Wait for completion**, dispatch `m15-w3-slice-a-reviewer` (`code-review` agent), then user gate before Slice B.
+
+## Blockers
+
+None.
+
+## Context for Next Agent
+
+- v0.6.1 is shipped on `origin/main` (tag `v0.6.1`, commit `572a038`). Wave 3 design commits (`fdc6e70`, `90375c9`, `e6473ea`) are committed locally and pushed. The current `main` HEAD is the supervisor approval of the revision pass.
+- Authoritative design surface: `docs/prds/PRD-verify-and-tested-state.md` and `docs/adrs/ADR-012-feature-tested-state.md`. Read both before dispatching Slice A. Supplement with `docs/handoff/HISTORY.md` 2026-04-27 entry for the why-this-was-locked-this-way context and reviewer adjudications.
+- Hard rules that still hold: ADR-010 D5 (source-truth guard), ADR-011 D6 (status-as-truth), recipe-op JSON schema frozen (no `delete-file` op), `omitempty` round-trip invariant, secret-by-reference, no nested map keys in YAML config (per stored memory).
+- The `tpatch` root binary is not gitignored; `rm -f tpatch` after any local `go build`.
+- Sub-agent self-reviews remain status-only signals. Always run an external review before approving anything non-trivial.
+
+```
+
+
 # 2026-04-27 — M15-W3-DESIGN — Wave 3 design (PRD + ADR-012) — APPROVED
 
 **Outcome**: APPROVED after one revision cycle. Design is locked; ready for Slice A code dispatch.

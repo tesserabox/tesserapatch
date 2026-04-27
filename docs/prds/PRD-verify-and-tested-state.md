@@ -1,3 +1,19 @@
+> **STATUS: SUPERSEDED — 2026-04-27.** This document captures the originally
+> approved Wave 3 design (lifecycle-state model: `tested` as a forward state on
+> the `FeatureState` enum). An external re-review (see `docs/supervisor/LOG.md`
+> 2026-04-27 reopening entry) found that the design conflated lifecycle and
+> verification freshness, and routed read-time mutation through `LoadFeatureStatus`.
+> The supervisor reopened Wave 3 with a binding redesign: a Git-like freshness
+> overlay model.
+>
+> - **Successor PRD**: [`docs/prds/PRD-verify-freshness.md`](PRD-verify-freshness.md)
+> - **Successor ADR**: [`docs/adrs/ADR-013-verify-freshness-overlay.md`](../adrs/ADR-013-verify-freshness-overlay.md)
+>
+> This document is preserved as historical record only. **Do not implement
+> against it.**
+
+---
+
 # PRD — `tpatch verify` + `tested` lifecycle state — `feat-verify-command` + `feat-feature-tested-state`
 
 **Status**: Draft (M15 Wave 3 design dispatch)

@@ -1,3 +1,42 @@
+## Reopening — M15-W3-DESIGN — 2026-04-27
+
+**Reopener**: Supervisor (user-mediated external re-review)
+**Trigger**: External re-review of the approved Wave 3 design (commit `8c3d72e`) identified two structural problems (F1: verify shadows ignored hard-parent closure replay; F4: lifecycle/freshness conflation routed read-path mutation through `LoadFeatureStatus`) plus two CURRENT.md drift findings (F2, F3).
+
+### Disposition
+
+- The previously approved Wave 3 design is **REOPENED and SUPERSEDED**, not silently revised in place.
+- A redesign pass produced a freshness-overlay model (Git-like semantics: lifecycle stays untouched; verification becomes a derived overlay).
+- Successor docs created:
+  - `docs/prds/PRD-verify-freshness.md` (supersedes `PRD-verify-and-tested-state.md`)
+  - `docs/adrs/ADR-013-verify-freshness-overlay.md` (supersedes ADR-012 in full)
+- Predecessor docs preserved with SUPERSEDED banners as historical record.
+- The prior `8c3d72e` approval entries in this LOG remain unchanged for audit-trail integrity.
+
+### Binding non-negotiables for the redesign
+
+- Lifecycle and freshness stay separate.
+- No new `StateTested` lifecycle value.
+- Verification result is a freshness sub-record on `FeatureStatus`, not a lifecycle transition.
+- Parent regressions produce stale freshness signals, never automatic child lifecycle demotions.
+- Read paths must NOT mutate persisted state.
+- Only explicit write verbs (`verify`, `apply`, `amend`, `reconcile`, `remove`) may persist invalidation.
+- Apply gate stays pure-lifecycle. Freshness is an operator/harness signal, not a gate input.
+- D6/D7 from the old design remain directionally valid: freshness lives in `status.json`; verify is read-only on the working tree.
+- New ADR + new PRD required (no in-place rewrite of approved docs).
+- No Go code in this redesign pass.
+
+### Verdict: REDESIGN IN PROGRESS — awaiting reviewer pass
+
+### Action taken
+
+1. Idle CURRENT.md (from `8c3d72e`) archived to `docs/handoff/HISTORY.md` as superseded.
+2. CURRENT.md rewritten with M15-W3-REDESIGN as the active task.
+3. Successor PRD + ADR landed; predecessor docs banner-marked SUPERSEDED.
+4. This LOG.md reopening entry prepended.
+5. Reviewer dispatch (`m15-w3-redesign-reviewer`) is the next supervisor action.
+
+
 ## Review — M15-W3-DESIGN (revision pass) — 2026-04-27
 
 **Reviewer**: Supervisor (direct, no sub-agent)
