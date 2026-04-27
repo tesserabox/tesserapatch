@@ -36,6 +36,18 @@
 - Tests: V0 abort, V1 pass + fail (missing + empty spec), V2 pass + fail (malformed JSON, missing op target) + absent-recipe Note 2 contract, `--no-write` non-persistence, `--json` shape with all 10 IDs in order, stub-reason naming a future slice. Plus two store-level round-trip tests guarding the `omitempty` byte-identity contract and the populated-record round-trip.
 - Apply gate untouched. `composeLabelsFromStatus` untouched. No closure replay (Slice C). No `--all` (Slice D).
 
+### Revision (post-review, 2026-04-27)
+
+- Reviewer issued **NEEDS REVISION** with one blocking finding: `parentSnapshot` recorded `""` for a missing hard parent, which is not a valid `FeatureState` enum and would defer a crash into Slice B's `satisfies_state_or_better` derivation.
+- Chosen fix: **omit missing parents from the snapshot map entirely**, rather than encode a sentinel state. Detecting a structurally missing parent is a `tpatch status` / dependency-validation concern, not the freshness layer's job. Slice B can iterate present keys without enum-value gymnastics.
+- Behavior on the all-missing edge: `parentSnapshot` returns `nil`, so the `omitempty`-tagged field stays absent from JSON, preserving byte-identical round-trip with the never-verified baseline (ADR-013 D4). Documented in the function godoc.
+- Tests added in `internal/workflow/verify_test.go`:
+  - `TestParentSnapshot_MissingParentOmitted` — one parent exists (`applied`), one is missing → exactly one key, missing slug not present.
+  - `TestParentSnapshot_AllParentsMissingReturnsNil` — every hard parent missing → `nil`.
+  - `TestParentSnapshot_SoftDepsExcluded` — preserves the existing soft-dep exclusion contract.
+- Validation re-run: `gofmt -l .` clean, `go test ./...` green, `go build ./cmd/tpatch` succeeds.
+- Status: **ready for re-review**.
+
 ## Current State
 
 - Slice A surface complete and gated by full test suite.

@@ -359,3 +359,99 @@ func TestRunVerify_V0_AbortsWhenStatusUnreadable(t *testing.T) {
 		t.Errorf("V0 should be the first failed check, got %+v", report.Checks[0])
 	}
 }
+
+// ── parentSnapshot ──────────────────────────────────────────────────────
+
+// TestParentSnapshot_MissingParentOmitted locks in the M15-W3-SLICE-A
+// revision: when a hard parent slug doesn't have an on-disk feature
+// directory, parentSnapshot must omit the key entirely (not record an
+// empty-string FeatureState, which is invalid and would crash Slice B's
+// satisfies_state_or_better derivation).
+func TestParentSnapshot_MissingParentOmitted(t *testing.T) {
+	tmp := t.TempDir()
+	s, err := store.Init(tmp)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	// Parent A exists and is applied. Parent B is never created.
+	if _, err := s.AddFeature(store.AddFeatureInput{Title: "parent-a", Slug: "parent-a", Request: "x"}); err != nil {
+		t.Fatalf("AddFeature parent-a: %v", err)
+	}
+	if err := s.MarkFeatureState("parent-a", store.StateApplied, "apply", ""); err != nil {
+		t.Fatalf("MarkFeatureState parent-a: %v", err)
+	}
+
+	child := store.FeatureStatus{
+		Slug: "child",
+		DependsOn: []store.Dependency{
+			{Slug: "parent-a", Kind: store.DependencyKindHard},
+			{Slug: "parent-b", Kind: store.DependencyKindHard}, // missing on disk
+		},
+	}
+
+	snap := parentSnapshot(s, child)
+	if len(snap) != 1 {
+		t.Fatalf("expected exactly one entry, got %d: %+v", len(snap), snap)
+	}
+	if got, ok := snap["parent-a"]; !ok || got != store.StateApplied {
+		t.Errorf("parent-a missing or wrong state: ok=%v state=%q", ok, got)
+	}
+	if v, ok := snap["parent-b"]; ok {
+		t.Errorf("parent-b must NOT be a key (got %q); empty-string sentinel is the bug being fixed", v)
+	}
+}
+
+// TestParentSnapshot_AllParentsMissingReturnsNil documents the chosen
+// behavior when every hard parent is missing on disk: parentSnapshot
+// returns nil so the omitempty-tagged field stays absent from JSON,
+// preserving byte-identical round-trip with the never-verified baseline
+// (ADR-013 D4).
+func TestParentSnapshot_AllParentsMissingReturnsNil(t *testing.T) {
+	tmp := t.TempDir()
+	s, err := store.Init(tmp)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	child := store.FeatureStatus{
+		Slug: "child",
+		DependsOn: []store.Dependency{
+			{Slug: "ghost-a", Kind: store.DependencyKindHard},
+			{Slug: "ghost-b", Kind: store.DependencyKindHard},
+		},
+	}
+
+	snap := parentSnapshot(s, child)
+	if snap != nil {
+		t.Fatalf("expected nil for all-missing parents, got %+v", snap)
+	}
+}
+
+// TestParentSnapshot_SoftDepsExcluded preserves the existing contract
+// that soft deps are never part of the snapshot — the freshness overlay
+// only tracks the hard-dep closure (ADR-013 D5).
+func TestParentSnapshot_SoftDepsExcluded(t *testing.T) {
+	tmp := t.TempDir()
+	s, err := store.Init(tmp)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, err := s.AddFeature(store.AddFeatureInput{Title: "soft-parent", Slug: "soft-parent", Request: "x"}); err != nil {
+		t.Fatalf("AddFeature soft-parent: %v", err)
+	}
+	if err := s.MarkFeatureState("soft-parent", store.StateApplied, "apply", ""); err != nil {
+		t.Fatalf("MarkFeatureState soft-parent: %v", err)
+	}
+
+	child := store.FeatureStatus{
+		Slug: "child",
+		DependsOn: []store.Dependency{
+			{Slug: "soft-parent", Kind: store.DependencyKindSoft},
+		},
+	}
+	snap := parentSnapshot(s, child)
+	if snap != nil {
+		t.Fatalf("soft-only deps must yield nil snapshot, got %+v", snap)
+	}
+}

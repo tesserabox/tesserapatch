@@ -387,11 +387,24 @@ func readArtifactBytes(s *store.Store, slug, name string) []byte {
 // FeatureState for every hard dep declared on `status`. Soft deps are
 // not part of the snapshot — the freshness overlay only tracks the
 // closure that the apply gate enforces (ADR-013 D5).
+//
+// Missing parents (slug declared as a hard dep but no
+// `.tpatch/features/<slug>/` on disk — typo, manual deletion, never
+// created) are omitted from the map entirely. Recording an empty
+// string would not be a valid FeatureState enum and would defer a
+// crash to the freshness derivation's satisfies_state_or_better
+// comparison. Detecting a structurally missing parent is the job of
+// `tpatch status` / dependency validation, not the freshness layer.
+//
+// Note on shape: the field is tagged `omitempty`, so an empty result
+// (zero hard deps, or all hard parents missing) serializes as an
+// absent key rather than `"parent_snapshot": {}`. We return nil in
+// that case to keep the JSON byte-identical to the never-verified
+// baseline (ADR-013 D4).
 func parentSnapshot(s *store.Store, status store.FeatureStatus) map[string]store.FeatureState {
 	if len(status.DependsOn) == 0 {
 		return nil
 	}
-	out := map[string]store.FeatureState{}
 	keys := make([]string, 0, len(status.DependsOn))
 	for _, dep := range status.DependsOn {
 		if dep.Kind != store.DependencyKindHard {
@@ -400,12 +413,11 @@ func parentSnapshot(s *store.Store, status store.FeatureStatus) map[string]store
 		keys = append(keys, dep.Slug)
 	}
 	sort.Strings(keys)
+	out := map[string]store.FeatureState{}
 	for _, slug := range keys {
 		ps, err := s.LoadFeatureStatus(slug)
 		if err != nil {
-			// Parent missing — record empty state literal so freshness
-			// derivation can flip to verified-stale rather than crash.
-			out[slug] = ""
+			// Parent missing — omit from snapshot. See function doc.
 			continue
 		}
 		out[slug] = ps.State
