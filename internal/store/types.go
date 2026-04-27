@@ -228,10 +228,10 @@ type Config struct {
 	CopilotNativeOptInAt string `json:"copilot_native_optin_at,omitempty"`
 
 	// FeaturesDependencies gates the feature dependency DAG (ADR-011 D9).
-	// Default false until v0.6.0. When false, all DAG-aware code paths
-	// must no-op and status.json must round-trip byte-identical to pre-M14
-	// fixtures. Wired via flat YAML key `features_dependencies: true|false`
-	// (the existing parser does not support nested maps without a rewrite).
+	// Default true from v0.6.0. Set explicitly to false to opt back into
+	// pre-v0.6.0 byte-identity behaviour. Wired via flat YAML key
+	// `features_dependencies: true|false` (the existing parser does not
+	// support nested maps without a rewrite).
 	FeaturesDependencies bool `json:"features_dependencies,omitempty"`
 }
 

@@ -124,10 +124,11 @@ func TestConfig_FeaturesDependenciesRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg, _ := s.LoadConfig()
-	if cfg.DAGEnabled() {
-		t.Fatal("default DAGEnabled must be false")
+	// v0.6.0 default flip: fresh init should report DAGEnabled.
+	if !cfg.DAGEnabled() {
+		t.Fatal("default DAGEnabled must be true from v0.6.0")
 	}
-	cfg.FeaturesDependencies = true
+	cfg.FeaturesDependencies = false
 	if err := s.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -135,8 +136,8 @@ func TestConfig_FeaturesDependenciesRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.DAGEnabled() {
-		t.Fatalf("expected DAGEnabled true after round-trip, got cfg=%+v", got)
+	if got.DAGEnabled() {
+		t.Fatalf("expected DAGEnabled false after explicit opt-out, got cfg=%+v", got)
 	}
 }
 

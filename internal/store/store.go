@@ -82,6 +82,10 @@ max_tokens_implement: 16384
 
 # Shell command run by ` + "`tpatch test <slug>`" + ` (e.g. "go test ./...", "bun test")
 test_command: ""
+
+# Feature dependency DAG (ADR-011). Default true from v0.6.0.
+# Set to false to opt back into v0.5.x byte-identity behaviour.
+features_dependencies: true
 `
 	if err := writeFile(store.configPath(), configContent); err != nil {
 		return nil, err
@@ -532,7 +536,11 @@ func parseYAMLConfig(content string) Config {
 		cfg.CopilotNativeOptIn = true
 	}
 	cfg.CopilotNativeOptInAt = extractYAMLValue(content, "copilot_native_optin_at")
-	if v := extractYAMLValue(content, "features_dependencies"); v == "true" {
+	if v := extractYAMLValue(content, "features_dependencies"); v != "" {
+		// Explicit value wins. Default (when key is absent) is true
+		// from v0.6.0 onward — see ADR-011 D9 + PRD-feature-dependencies.
+		cfg.FeaturesDependencies = v != "false"
+	} else {
 		cfg.FeaturesDependencies = true
 	}
 	return cfg

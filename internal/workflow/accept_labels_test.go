@@ -97,10 +97,16 @@ func TestAcceptShadow_FlagOn_RefreshesLabels(t *testing.T) {
 func TestAcceptShadow_FlagOff_LabelsRemainNil(t *testing.T) {
 	s, slug := buildConflictFixture(t)
 
-	// Flag is off by default.
+	// Flag must be off for this byte-identity guard. v0.6.0 default
+	// flipped to true, so opt out explicitly.
 	cfg, _ := s.LoadConfig()
+	cfg.FeaturesDependencies = false
+	if err := s.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = s.LoadConfig()
 	if cfg.DAGEnabled() {
-		t.Fatal("flag must be off by default")
+		t.Fatal("flag must be off after explicit opt-out")
 	}
 
 	prov := &scriptedProvider{

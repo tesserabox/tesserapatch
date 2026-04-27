@@ -100,7 +100,13 @@ func TestApplyExecute_FlagOff_BypassesDependencyGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	// FeaturesDependencies stays false (default).
+	// FeaturesDependencies must be set to false here to opt out of the
+	// v0.6.0 default-on behaviour and exercise the flag-off no-op path.
+	cfg, _ := s.LoadConfig()
+	cfg.FeaturesDependencies = false
+	if err := s.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
 	parent, _ := s.LoadFeatureStatus(parentSlug)
 	parent.State = store.StateAnalyzed
 	s.SaveFeatureStatus(parent)
