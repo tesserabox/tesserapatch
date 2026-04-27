@@ -1,3 +1,8 @@
+---
+name: tessera-patch
+description: Customize open-source projects through natural-language patches while maintaining upstream compatibility.
+---
+
 # Tessera Patch — Claude Code Skill
 
 ## What This Is
