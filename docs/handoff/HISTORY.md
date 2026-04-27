@@ -1,3 +1,48 @@
+## 2026-04-27 — M15-W2 fix-pass APPROVED, v0.6.1 release prep
+
+**Trigger**: External re-review against the merged M15-W1+W2 surface (HEAD `ad040ac`) surfaced 4 medium findings. Supervisor closed all 4 in-tree before tagging rather than dispatching a separate implementer cycle (changes are tightly coupled and small).
+
+**Fix-pass commit**: `eb92051`.
+
+**Findings (re-reviewer) → fixes**:
+
+1. **F1 — satisfied_by contract drift** (Wave 1 reachability vs Wave 2 gate): validation accepted any reachable ref including unique short SHAs; apply-time gate still rejected anything not 40-hex. Save-now/fail-later path. *Fix*: validation now requires 40-hex AND reachability; new sentinel `ErrSatisfiedByMalformed`; new test `TestValidateDependencies_SatisfiedByMalformed` (4 invalid forms); existing reachability/git-error tests rebased onto 40-hex literals.
+
+2. **F2 — scoped record metadata leak** (Wave 2 `--files`): patch was scoped but `CaptureDiffStat` was unscoped, so `post-apply-diff.txt` and `record.md` still embedded full-tree diffstat. *Fix*: new `gitutil.CaptureDiffStatScoped(repoRoot, pathspecs)`; `CaptureDiffStat` delegates with `nil` (byte-identical default); `recordCmd` calls the scoped variant. Test: `TestCaptureDiffStatScoped_NarrowsToPathspec`.
+
+3. **F3 — invalid pathspec swallowed** (Wave 2 `--files`): `CapturePatchScoped` collapsed any git-diff failure into an empty patch, then `recordCmd` reported "captured 0 bytes". Reviewer reproduced with `:(badmagic)foo`. *Fix*: when pathspecs is non-empty, propagate the wrapped git error; clean up intent-to-add markers on the failure path. Empty pathspecs preserves historical tolerant behavior. Test: `TestCapturePatchScoped_InvalidPathspecSurfacesError`.
+
+4. **F4 — Windows syntax-check quoting** (Wave 2 shell selection): `UserShell` returns `cmd /C` on Windows but `shellQuote` always emitted POSIX single-quote form, leaking quote characters into argv. *Fix*: `shellQuote` → `shellQuoteFor(goos, p)`; Windows uses `"…"` with embedded `"` doubled, Unix retains `'…'` with `'''` escape. Tests: `TestShellQuoteFor` (6 cases) + `TestShellQuoteFor_PairsWithUserShell` invariant guard.
+
+**Validation gate (eb92051)**:
+- `gofmt -l .` clean.
+- `go build ./cmd/tpatch` clean (root binary removed).
+- `go test ./...` clean across all 7 packages.
+- Focused `go test ./internal/store -run Validate` — 17/17 pass.
+
+**Files changed (fix-pass)**:
+- `internal/store/validation.go` (F1 — regex + sentinel + 40-hex+reachability ordering in both `ValidateDependencies` and `ValidateAllFeatures`)
+- `internal/store/validation_test.go` (F1 — new malformed test; reachability tests rebased to 40-hex)
+- `internal/gitutil/gitutil.go` (F2 — `CaptureDiffStatScoped` + delegating `CaptureDiffStat`; F3 — wrapped error on scoped diff failure with cleanup)
+- `internal/gitutil/capture_scoped_test.go` (F2/F3 — diffstat-narrows test + invalid-pathspec test)
+- `internal/cli/cobra.go` (F2 — `recordCmd` uses `CaptureDiffStatScoped`)
+- `internal/workflow/validation.go` (F4 — OS-aware `shellQuoteFor`)
+- `internal/workflow/shell_quote_test.go` (F4 — new file: matrix + pairing-invariant test)
+- `docs/supervisor/LOG.md` (fix-pass entry prepended)
+- `docs/handoff/CURRENT.md`
+
+**Lessons / process notes**:
+
+- **Self-review was overconfident.** The original M15-W2 reviewer (sub-agent code-review) returned "APPROVED, zero findings"; the external re-review found 4 medium issues. Treat sub-agent self-reviews as status signals, never as approval signals. Real approval requires an outside read.
+- **Wave-1 / Wave-2 contract surfaces interact.** F1 only emerged because Wave 1 hardened validation while Wave 2 left the apply-gate's contract untouched. When two waves touch overlapping value spaces, an explicit contract-alignment audit between waves is cheap insurance.
+- **Hookable seams paid off.** The Wave 1 `var isAncestor = gitutil.IsAncestor` pattern made F1's test rebase trivial; the Wave 2 `userShellFor` pattern made F4's pairing-invariant test possible without a Windows runner. Worth keeping as a convention.
+
+**Decision taken**: cut `v0.6.1` immediately after this fix-pass. Wave 1 + Wave 2 + fix-pass form a coherent stabilization release. Wave 3 (verify, tested-state, code-presence verdicts, fresh-branch reconcile) is lifecycle/reconcile semantics and warrants a PRD/ADR pass before dispatch — explicitly NOT bundled into v0.6.1.
+
+**Next**: tag `v0.6.1` (this commit + version bump + CHANGELOG), then queue a Wave 3 design pass starting with `feat-verify-command` (lowest blast radius of the four).
+
+---
+
 ## 2026-04-26 — M15-W2 (Wave 2 Path B trio) APPROVED, archiving handoff
 
 **Reviewer verdict**: APPROVED, zero findings (LOG entry `2fb11f5`).

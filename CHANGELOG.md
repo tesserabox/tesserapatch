@@ -2,6 +2,64 @@
 
 All notable changes to tpatch are recorded here.
 
+## v0.6.1 — 2026-04-27 — M15 Stabilization (Wave 1 + Wave 2 + fix-pass)
+
+User-facing stabilization release. Seven backlog items + a four-finding fix-pass against the merged surface. No schema, ADR, or default-behavior changes — `v0.6.0` repos round-trip byte-identical and behave the same except where explicitly noted.
+
+### Added
+
+- **`tpatch define <slug>` accepts `spec` as an alias** (`internal/cli/cobra.go`). Lifecycle commands enumerated in skill assets gain the alias too. Backwards compatible: `define` is unchanged.
+- **`tpatch record <slug> --files <pathspec>...`** narrows the captured patch to the supplied pathspecs (`internal/cli/cobra.go`, `internal/gitutil/gitutil.go::CapturePatchScoped`). `--files` is mutually exclusive with `--from`; the empty-pathspec path is byte-identical to the historical full-tree capture. Companion `gitutil.CaptureDiffStatScoped` keeps `post-apply-diff.txt` and `record.md` scoped to the same pathspecs (no metadata leak).
+- **`tpatch record <slug>` autogenerates `apply-recipe.json`** from the captured patch (`internal/workflow/recipe.go`). Default produces a fresh recipe alongside the patch; existing recipes are preserved unless the file/op-set has drifted, in which case a `recipe-stale.json` sidecar is emitted with a stderr warning. `--regenerate-recipe` opts into overwriting. `--no-recipe-autogen` disables generation entirely. The recipe-op JSON schema is unchanged: file deletions are not in the schema today, so they are skipped during autogen with a stderr note (a future ADR is required to add a `delete-file` op).
+- **Validation: `satisfied_by` reachability + 40-hex contract.** `internal/store/validation.go` now refuses to persist a `satisfied_by` value that is not a 40-character hex SHA *and* not reachable from `HEAD`. Sentinel errors `ErrSatisfiedByMalformed` and `ErrSatisfiedBySHANotReachable` make the failure mode explicit. Closes the M14.1 deliberate limitation (any well-formed hex was accepted) and the M15-W2 review F1 contract drift (validation accepted reachable short SHAs that the apply-time gate would reject later).
+- **Cross-platform user-shell selection.** New `internal/workflow.UserShell()` helper picks `sh -c` on Unix and `cmd /C` on Windows. Used by the `test_command` runner, the syntax-check gate, and `tpatch test`. Companion `shellQuoteFor(goos, p)` quotes `{file}` substitutions with the right convention for the chosen shell (single-quote on Unix, double-quote with `""` doubling on Windows). Unix behavior is byte-identical.
+- **Skill assets ship valid YAML frontmatter.** `assets/skills/copilot/tessera-patch/SKILL.md` and `assets/skills/claude/tessera-patch/SKILL.md` now begin with a `---`-delimited frontmatter block (`name`, `description`). The Copilot CLI / Claude Code skill loaders that previously rejected the files with "missing or malformed YAML frontmatter" now accept them. Skill body is unchanged; parity guard (`assets/assets_test.go`) holds.
+
+### Changed
+
+- **`tpatch record` now detects post-record drift** between the captured patch and any pre-existing recipe (file-set comparison). Drift triggers a `recipe-stale.json` sidecar plus a stderr warning rather than overwriting silently. Same-files-different-content is intentionally below the floor (file-set drift only); deeper drift detection is deferred to a follow-up.
+- **`gitutil.CapturePatchScoped` surfaces git errors when called with explicit pathspecs.** Previously any `git diff` failure was collapsed into an empty patch, then `recordCmd` reported the generic "captured 0 bytes" diagnostic. Empty pathspecs preserves the historical tolerant behavior the unscoped capture path has always relied on.
+
+### Notes
+
+- **Apply-time dependency gate is unchanged.** It still does the cheap 40-hex regex check; reachability lives in validation. The two layers now enforce the same value space (defense-in-depth) and validation refuses to persist anything reachability would later reject.
+- **Hookable seam pattern.** Two new package-level vars (`store.isAncestor = gitutil.IsAncestor`, `workflow.userShellFor`) keep unit tests free of real git/shell calls. Convention for future external-command call sites.
+- **Recipe-op JSON schema unchanged.** The schema does not include a `delete-file` op; autogen skips deletions and warns. Adding the op type requires an ADR and a parity-guard update. Flagged for a future wave.
+- **Source-truth guard (ADR-011 D6) preserved.** No new readers of `artifacts/reconcile-session.json`. `status.Reconcile.Outcome` remains the authoritative machine-readable reconcile result; `artifacts/post-apply.patch` remains the reconcile authority for replay.
+- **No new external Go dependencies.** stdlib + `cobra/pflag` only.
+- **Backward compatibility.** A v0.6.0 repo with no `--files`, no `spec` alias, no autogen interaction, and a Unix shell behaves byte-identical. Repos that already declared a `satisfied_by` short SHA will fail validation on next status — fix by replacing with the full 40-hex SHA (this was a save-now/fail-later path before; now it fails at edit time, which is the intended contract).
+- **Out of scope for v0.6.1** (deferred to Wave 3 / later): `tpatch verify <slug>`, `tested` lifecycle state, code-presence reconcile verdicts, fresh-branch reconcile mode, recipe-op schema extension for deletions.
+
+
+
+First user-facing release of the feature-dependency DAG. Features can now declare hard / soft parents; apply, reconcile, status, and remove all observe the graph. Default-on (toggle via `features_dependencies: false`). PRD: `docs/prds/PRD-feature-dependencies.md` · ADR: `docs/adrs/ADR-011-feature-dependencies.md` · User reference: `docs/dependencies.md`.
+
+### Added
+
+- **M14.1 — Schema + validator (`internal/store`)** — `status.json` gains `depends_on: [{slug, kind, satisfied_by?}]` (omitempty round-trip). `Config.FeaturesDependencies` (`features_dependencies: true|false` in `.tpatch/config.yaml`). Pure DAG primitives: `DetectCycles`, `TopologicalOrder`, `Children`. Validator (`ValidateDependencies` / `ValidateAllFeatures`) with five sentinel errors: self-dep, dangling, kind-conflict, cycles, satisfied_by-requires-upstream-merged. Atomic edit semantics (rejected change leaves store untouched).
+- **M14.2 — Apply gate + ordering (`internal/workflow`)** — `tpatch apply --mode execute` checks each hard parent before any file mutation; lists unsatisfied parents with their states. Soft parents never gate. Recipe-level `created_by` field on every operation: declares "this op was authored by parent feature X", validated against the recipe's `depends_on`. Cycle-aware traversal everywhere; `RunImplement` and `RunApply` topo-sort dependents.
+- **M14.3 — Reconcile labels + compound presentation (`internal/store`, `internal/workflow`)** — Three composable labels overlayed on `Reconcile.Outcome`: `waiting-on-parent`, `blocked-by-parent`, `stale-parent-applied`. `EffectiveOutcome()` reports the compound string `blocked-by-parent-and-needs-resolution` when the child's intrinsic outcome is `blocked-requires-human` AND `blocked-by-parent` is set (display-only — programmatic decisions still read `Outcome` and `Labels` separately). Source-truth guard: all DAG/label code reads `status.Reconcile.Outcome` via `store.LoadFeatureStatus`, NEVER `artifacts/reconcile-session.json` (ADR-010 D5). Adversarial test pins this.
+- **M14.4 chunk A — `tpatch status --dag`** — ASCII renderer (hard `─►`, soft `┄►`) with full-graph and scoped-to-slug modes; `--json` flag emits a structured shape for harnesses. Cycle-safe (corrupted graph degrades to flat list with `⚠ cycle detected` warning rather than recursing).
+- **M14.4 chunk B — Default flip** — `features_dependencies` now defaults to **true** when the key is absent. `Init()` template writes the explicit `true`. v0.5.3 byte-identity preserved by setting `features_dependencies: false`.
+- **M14.4 chunk C — Dependency-management CLI** — New verb tree `tpatch feature deps [<slug> [add|remove] <parent>[:hard|:soft]] | --validate-all`. `tpatch amend <slug> --depends-on <parent>[:kind] / --remove-depends-on <parent>` (deps-only mode skips request.md rewrite). `tpatch remove <slug> --cascade` performs reverse-topo deletion with TTY confirm; `--cascade --force` skips the prompt for non-TTY use. **`--force` alone never bypasses the dep-integrity gate** (PRD §3.7, ADR-011 D7).
+- **M14.4 chunk D — Status-time validation** — `tpatch status` (with or without `--dag`) re-runs `ValidateAllFeatures` and surfaces every cycle / dangling / kind-conflict inline.
+- **M14.4 chunk E — 6-skill rollout** — All six shipped skill formats (Claude, Copilot, Copilot Prompt, Cursor, Windsurf, Generic workflow) updated atomically with the dependency surface. `created_by` description updated from "inert" (v0.5.x) to live apply-time gate (v0.6.0+) with the dry-run downgrade noted. Parity guard (`assets_test.go`) holds.
+- **M14.4 chunk F — User reference** — `docs/dependencies.md` covers edge model, declaration paths, validation rules, apply-time gate, `created_by` op-level gate, reconcile labels, compound verdict, `status --dag` examples, `--cascade` contract, migration, and the explicit out-of-scope list.
+
+### Changed
+
+- `tpatch apply --mode execute` now **fails fast** when an op's `created_by` parent is missing from `depends_on` or when a hard parent is unsatisfied. `tpatch apply --dry-run` downgrades the missing-hard-parent miss to a **warning** so operators can inspect the planned changes; recipe-shape errors (parent absent from `depends_on`, unknown kind) remain hard in both modes (PRD §4.3).
+- `Reconcile.Labels` is now persisted on `status.json` (omitempty — empty slices round-trip to `nil`).
+- `tpatch status` topology and presentation are unchanged on dependency-free repos; the new label / DAG output only appears when relevant.
+
+### Notes
+
+- **Version**: bumped to `0.6.0` in `internal/cli/cobra.go`.
+- **No new external Go dependencies**; stdlib + `cobra/pflag` only.
+- **No tag is created in this commit** — supervisor performs the `v0.6.0` tag at closeout.
+- **Backward compatibility**: a v0.5.3 repo that does not declare any `depends_on` continues to round-trip byte-identical and behaves exactly as before. Setting `features_dependencies: false` in `.tpatch/config.yaml` restores full v0.5.3 semantics for projects that pin tpatch behaviour by SHA.
+- **Out of scope for v0.6.0** (deferred): provider-assisted parent-patch injection in the M12 resolver (ADR-011 D8); auto-inference of `created_by` from file paths (PRD §4.3.1); soft-only cascade modes.
+
 ## v0.6.0 — 2026-04-26 — Feature Dependencies (Tranche D)
 
 First user-facing release of the feature-dependency DAG. Features can now declare hard / soft parents; apply, reconcile, status, and remove all observe the graph. Default-on (toggle via `features_dependencies: false`). PRD: `docs/prds/PRD-feature-dependencies.md` · ADR: `docs/adrs/ADR-011-feature-dependencies.md` · User reference: `docs/dependencies.md`.
@@ -31,6 +89,7 @@ First user-facing release of the feature-dependency DAG. Features can now declar
 - **No tag is created in this commit** — supervisor performs the `v0.6.0` tag at closeout.
 - **Backward compatibility**: a v0.5.3 repo that does not declare any `depends_on` continues to round-trip byte-identical and behaves exactly as before. Setting `features_dependencies: false` in `.tpatch/config.yaml` restores full v0.5.3 semantics for projects that pin tpatch behaviour by SHA.
 - **Out of scope for v0.6.0** (deferred): provider-assisted parent-patch injection in the M12 resolver (ADR-011 D8); auto-inference of `created_by` from file paths (PRD §4.3.1); soft-only cascade modes.
+
 
 ## v0.5.3 — Shadow Accept Accounting Fixes (Tranche C3)
 
