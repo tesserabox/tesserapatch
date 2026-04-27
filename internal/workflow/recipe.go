@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,11 @@ type RecipeExecResult struct {
 	Skipped    int      `json:"skipped"`
 	Errors     []string `json:"errors,omitempty"`
 	Messages   []string `json:"messages,omitempty"`
+	// Warnings collects non-fatal advisories emitted during dry-run
+	// (e.g. C5 F2: hard-parent created_by + missing target downgrades
+	// from E to W per PRD §4.3). Execute-mode never populates this —
+	// the same condition aborts apply with ErrPathCreatedByParent.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // DryRunRecipe validates a recipe against the codebase without modifying anything.
@@ -27,15 +33,24 @@ type RecipeExecResult struct {
 // classify each op against the child feature's declared dependencies.
 // When Config.FeaturesDependencies is false the gate is a no-op and
 // behaviour is byte-identical to v0.5.3.
+//
+// C5 F2: per PRD §4.3, dry-run downgrades hard-parent created_by misses
+// to a warning (the op is reported as "would succeed once parent is
+// applied" rather than aborting the recipe). Execute-mode keeps the
+// hard error to abort apply. Recipe-shape validation errors (created_by
+// names a feature outside depends_on) remain hard errors in both modes.
 func DryRunRecipe(s *store.Store, recipe ApplyRecipe) RecipeExecResult {
 	result := RecipeExecResult{Operations: len(recipe.Operations)}
 	for _, op := range recipe.Operations {
-		msg, err := dryRunOperation(s, recipe.Feature, op)
+		msg, warn, err := dryRunOperation(s, recipe.Feature, op)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("[%s] %s: %v", op.Type, op.Path, err))
-		} else {
-			result.Applied++
-			result.Messages = append(result.Messages, msg)
+			continue
+		}
+		result.Applied++
+		result.Messages = append(result.Messages, msg)
+		if warn != "" {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("[%s] %s: %s", op.Type, op.Path, warn))
 		}
 	}
 	result.Success = len(result.Errors) == 0
@@ -72,19 +87,19 @@ func LoadRecipe(s *store.Store, slug string) (ApplyRecipe, error) {
 	return recipe, nil
 }
 
-func dryRunOperation(s *store.Store, slug string, op RecipeOperation) (string, error) {
+func dryRunOperation(s *store.Store, slug string, op RecipeOperation) (string, string, error) {
 	repoRoot := s.Root
 	target := filepath.Join(repoRoot, op.Path)
 	if err := safety.EnsureSafeRepoPath(repoRoot, target); err != nil {
-		return "", fmt.Errorf("path safety: %w", err)
+		return "", "", fmt.Errorf("path safety: %w", err)
 	}
 
 	switch op.Type {
 	case "write-file":
 		if _, err := os.Stat(filepath.Dir(target)); os.IsNotExist(err) {
-			return "", fmt.Errorf("parent directory does not exist")
+			return "", "", fmt.Errorf("parent directory does not exist")
 		}
-		return fmt.Sprintf("[write-file] would write %s (%d bytes)", op.Path, len(op.Content)), nil
+		return fmt.Sprintf("[write-file] would write %s (%d bytes)", op.Path, len(op.Content)), "", nil
 
 	case "replace-in-file":
 		// M14 created_by gate (ADR-011 D4): classify the op before the
@@ -94,38 +109,52 @@ func dryRunOperation(s *store.Store, slug string, op RecipeOperation) (string, e
 		_, statErr := os.Stat(target)
 		targetExists := statErr == nil
 		if gateErr := checkCreatedByGate(s, slug, op, targetExists); gateErr != nil {
-			return "", gateErr
+			// C5 F2 / PRD §4.3: dry-run downgrades a hard-parent
+			// created_by miss from E to W. The op is reported as "would
+			// succeed once parent is applied" so the recipe-level
+			// summary shows it among Applied (not Errors). Recipe-shape
+			// validation errors (parent-not-in-depends_on, unknown kind)
+			// keep their hard-error status in both dry-run and execute.
+			if errors.Is(gateErr, ErrPathCreatedByParent) {
+				warn := fmt.Sprintf("warning: path %s will be created by parent feature %s; apply %s before executing", op.Path, op.CreatedBy, op.CreatedBy)
+				return fmt.Sprintf("[replace-in-file] %s (deferred — created_by parent %s)", op.Path, op.CreatedBy), warn, nil
+			}
+			return "", "", gateErr
 		}
 		content, err := os.ReadFile(target)
 		if err != nil {
-			return "", fmt.Errorf("file not found: %w", err)
+			return "", "", fmt.Errorf("file not found: %w", err)
 		}
 		idx := strings.Index(string(content), op.Search)
 		if idx < 0 {
-			return "", fmt.Errorf("search text not found in %s", op.Path)
+			return "", "", fmt.Errorf("search text not found in %s", op.Path)
 		}
 		line := strings.Count(string(content[:idx]), "\n") + 1
-		return fmt.Sprintf("[replace-in-file] would replace in %s (match at line %d)", op.Path, line), nil
+		return fmt.Sprintf("[replace-in-file] would replace in %s (match at line %d)", op.Path, line), "", nil
 
 	case "append-file":
 		_, statErr := os.Stat(target)
 		targetExists := statErr == nil
 		if gateErr := checkCreatedByGate(s, slug, op, targetExists); gateErr != nil {
-			return "", gateErr
+			if errors.Is(gateErr, ErrPathCreatedByParent) {
+				warn := fmt.Sprintf("warning: path %s will be created by parent feature %s; apply %s before executing", op.Path, op.CreatedBy, op.CreatedBy)
+				return fmt.Sprintf("[append-file] %s (deferred — created_by parent %s)", op.Path, op.CreatedBy), warn, nil
+			}
+			return "", "", gateErr
 		}
 		if !targetExists {
-			return "", fmt.Errorf("file not found: %s", op.Path)
+			return "", "", fmt.Errorf("file not found: %s", op.Path)
 		}
-		return fmt.Sprintf("[append-file] would append to %s (%d bytes)", op.Path, len(op.Content)), nil
+		return fmt.Sprintf("[append-file] would append to %s (%d bytes)", op.Path, len(op.Content)), "", nil
 
 	case "ensure-directory":
 		if info, err := os.Stat(target); err == nil && info.IsDir() {
-			return fmt.Sprintf("[ensure-directory] %s already exists", op.Path), nil
+			return fmt.Sprintf("[ensure-directory] %s already exists", op.Path), "", nil
 		}
-		return fmt.Sprintf("[ensure-directory] would create %s", op.Path), nil
+		return fmt.Sprintf("[ensure-directory] would create %s", op.Path), "", nil
 
 	default:
-		return "", fmt.Errorf("unknown operation type %q", op.Type)
+		return "", "", fmt.Errorf("unknown operation type %q", op.Type)
 	}
 }
 

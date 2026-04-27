@@ -468,11 +468,18 @@ func applyCmd() *cobra.Command {
 				for _, msg := range result.Messages {
 					fmt.Fprintf(out, "  ✓ %s\n", msg)
 				}
+				for _, w := range result.Warnings {
+					fmt.Fprintf(out, "  ⚠ %s\n", w)
+				}
 				for _, e := range result.Errors {
 					fmt.Fprintf(out, "  ✗ %s\n", e)
 				}
 				if result.Success {
-					fmt.Fprintln(out, "All operations would succeed.")
+					if len(result.Warnings) > 0 {
+						fmt.Fprintf(out, "All operations would succeed (%d warning(s)).\n", len(result.Warnings))
+					} else {
+						fmt.Fprintln(out, "All operations would succeed.")
+					}
 				} else {
 					fmt.Fprintf(out, "%d error(s) — recipe would fail.\n", len(result.Errors))
 				}

@@ -74,9 +74,10 @@ func TestCreatedByGate_FlagOff_NoOp(t *testing.T) {
 }
 
 // TestCreatedByGate_HardParent_TargetMissing_ErrPathCreatedByParent — the
-// canonical hard-parent case. Recipe op for a file that doesn't exist yet,
-// declared as created_by a hard parent, surfaces the actionable sentinel
-// error naming the parent slug.
+// canonical hard-parent case at the gate-helper level: the sentinel must
+// be returned from checkCreatedByGate so executeOperation can abort
+// apply. Recipe-level dry-run vs execute split is exercised by the two
+// tests that follow (C5 F2).
 func TestCreatedByGate_HardParent_TargetMissing_ErrPathCreatedByParent(t *testing.T) {
 	s := createdByTestEnv(t, true, "parent", "child", store.DependencyKindHard)
 
@@ -98,15 +99,63 @@ func TestCreatedByGate_HardParent_TargetMissing_ErrPathCreatedByParent(t *testin
 	if !strings.Contains(msg, "apply parent first") {
 		t.Errorf("error message must direct operator to apply parent; got %q", msg)
 	}
+}
 
-	// Also exercise via DryRunRecipe end-to-end.
+// TestCreatedByGate_DryRun_HardParent_TargetMissing_DowngradesToWarning —
+// C5 F2 / PRD §4.3: dry-run must NOT abort the recipe when a hard parent
+// owns a missing target. It downgrades the gate verdict to a warning,
+// reports the op as Applied (would succeed once parent is applied), and
+// surfaces the actionable hint via RecipeExecResult.Warnings. This
+// preserves the convention that dry-run never fails on validation-tier
+// issues.
+func TestCreatedByGate_DryRun_HardParent_TargetMissing_DowngradesToWarning(t *testing.T) {
+	s := createdByTestEnv(t, true, "parent", "child", store.DependencyKindHard)
+
+	op := RecipeOperation{Type: "replace-in-file", Path: "src/auth.ts", Search: "x", Replace: "y", CreatedBy: "parent"}
 	recipe := ApplyRecipe{Feature: "child", Operations: []RecipeOperation{op}}
+
 	res := DryRunRecipe(s, recipe)
+	if !res.Success {
+		t.Fatalf("dry-run must succeed (downgrade to W); got errors %v", res.Errors)
+	}
+	if res.Applied != 1 {
+		t.Fatalf("op must count as Applied (deferred), got Applied=%d", res.Applied)
+	}
+	if len(res.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(res.Warnings), res.Warnings)
+	}
+	w := res.Warnings[0]
+	for _, want := range []string{"src/auth.ts", "parent", "apply parent before executing"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warning must contain %q; got %q", want, w)
+		}
+	}
+
+	// Append-file op shape too: confirms the downgrade applies to all
+	// gated op types.
+	opAppend := RecipeOperation{Type: "append-file", Path: "src/missing.go", Content: "x", CreatedBy: "parent"}
+	resApp := DryRunRecipe(s, ApplyRecipe{Feature: "child", Operations: []RecipeOperation{opAppend}})
+	if !resApp.Success || len(resApp.Warnings) != 1 || resApp.Applied != 1 {
+		t.Fatalf("append-file dry-run must downgrade too; got success=%v applied=%d warnings=%v errors=%v",
+			resApp.Success, resApp.Applied, resApp.Warnings, resApp.Errors)
+	}
+}
+
+// TestCreatedByGate_Execute_HardParent_TargetMissing_ReturnsErr — execute
+// mode keeps the hard error: the recipe aborts so the operator does not
+// commit a half-applied state.
+func TestCreatedByGate_Execute_HardParent_TargetMissing_ReturnsErr(t *testing.T) {
+	s := createdByTestEnv(t, true, "parent", "child", store.DependencyKindHard)
+
+	op := RecipeOperation{Type: "replace-in-file", Path: "src/auth.ts", Search: "x", Replace: "y", CreatedBy: "parent"}
+	recipe := ApplyRecipe{Feature: "child", Operations: []RecipeOperation{op}}
+
+	res := ExecuteRecipe(s, recipe)
 	if res.Success {
-		t.Fatalf("recipe must fail when hard parent owns missing target")
+		t.Fatalf("execute must fail when hard parent owns missing target")
 	}
 	if len(res.Errors) != 1 || !strings.Contains(res.Errors[0], "will be created by parent feature parent") {
-		t.Fatalf("wrong recipe error: %v", res.Errors)
+		t.Fatalf("expected ErrPathCreatedByParent error from execute; got %v", res.Errors)
 	}
 }
 
@@ -223,6 +272,10 @@ func TestCreatedByGate_ParentUpstreamMerged_TargetExists_NoError(t *testing.T) {
 // NOT for write-file or ensure-directory (which create their target).
 // This pins ADR-011 D4's "only ops with hard target preconditions are
 // gated" rule against accidental scope creep.
+//
+// The gated cases use ExecuteRecipe (not DryRunRecipe) because, per
+// C5 F2, dry-run downgrades hard-parent created_by misses to warnings.
+// Execute-mode is the place that still surfaces the hard error.
 func TestCreatedByGate_AppliesToReplaceAndAppend(t *testing.T) {
 	s := createdByTestEnv(t, true, "parent", "child", store.DependencyKindHard)
 
@@ -232,12 +285,18 @@ func TestCreatedByGate_AppliesToReplaceAndAppend(t *testing.T) {
 	}
 	for _, op := range gated {
 		recipe := ApplyRecipe{Feature: "child", Operations: []RecipeOperation{op}}
-		res := DryRunRecipe(s, recipe)
+		res := ExecuteRecipe(s, recipe)
 		if res.Success {
-			t.Fatalf("[%s] expected gate to fire, got success", op.Type)
+			t.Fatalf("[%s] expected gate to fire on execute, got success", op.Type)
 		}
 		if len(res.Errors) != 1 || !strings.Contains(res.Errors[0], "will be created by parent feature parent") {
 			t.Fatalf("[%s] expected ErrPathCreatedByParent error; got %v", op.Type, res.Errors)
+		}
+		// Dry-run for the same op must downgrade to a warning (C5 F2).
+		dr := DryRunRecipe(s, recipe)
+		if !dr.Success || len(dr.Warnings) != 1 {
+			t.Fatalf("[%s] dry-run must downgrade to warning; got success=%v warnings=%v errors=%v",
+				op.Type, dr.Success, dr.Warnings, dr.Errors)
 		}
 	}
 
