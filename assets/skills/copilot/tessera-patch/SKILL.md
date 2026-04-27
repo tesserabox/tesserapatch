@@ -108,7 +108,7 @@ Phase → artifact → state contract (the `--manual` flag validates this):
 Semantics:
 
 - Ops: `ensure-directory`, `write-file { path, content }`, `replace-in-file { path, search, replace }`, `append-file { path, content }`. No `delete-file` / `rename-file` yet — use Path B + `git rm` for deletes.
-- Optional `created_by` (string, parent feature slug) on any op — DAG ordering / label hint consumed by future M14.3+ features. Inert in v0.5.x; omit unless the recipe declares feature-DAG provenance.
+- Optional `created_by` (string, parent feature slug) on any op — from v0.6.0 a **live apply-time gate**: `apply --mode execute` rejects ops whose `created_by` parent is missing from `depends_on` (hard-parent miss fails in execute, warns in `--dry-run`). Omit unless the recipe declares feature-DAG provenance.
 - `replace-in-file.search` is a **literal string match, not a regex**. Paste the exact text, include surrounding lines for uniqueness.
 - `replace-in-file` replaces exactly one occurrence per op. Emit multiple ops to replace several copies.
 - All `path` values are repo-relative. `../`, absolute paths, or symlinks outside the repo abort `apply --mode execute` (`EnsureSafeRepoPath`).
@@ -129,6 +129,41 @@ When they disagree (e.g. the recipe's `replace-in-file` can no longer find its a
 3. Read `.tpatch/features/<slug>/spec.md` (intent), `.tpatch/features/<slug>/artifacts/post-apply.patch` (diff), and the new upstream version of each conflicted file.
 4. Hand-author a resolution that preserves **both** intents.
 5. `tpatch apply <slug> --mode done && tpatch record <slug>`.
+
+## Feature dependencies (v0.6.0+)
+
+Tessera Patch tracks a dependency DAG between features. Declare parents in `status.json` `depends_on`, or via the CLI:
+
+- `tpatch feature deps <slug>` — print depends_on + dependents.
+- `tpatch feature deps <slug> add <parent>[:hard|:soft]` — add an edge (defaults to hard).
+- `tpatch feature deps <slug> remove <parent>` — remove an edge (atomic).
+- `tpatch amend <slug> --depends-on <parent>[:hard|:soft]` — same, in batch with other edits.
+- `tpatch amend <slug> --remove-depends-on <parent>` — same, in batch.
+- `tpatch feature deps --validate-all` — global validation (cycles, dangling, kind conflict).
+- `tpatch status --dag` (add `--json` for harnesses) — render the DAG tree. Add a slug to scope to one feature's parents + children.
+
+Edge kinds:
+
+- **hard** (default) — `tpatch apply <child>` is blocked until every hard parent reaches state `applied` or `upstream_merged`.
+- **soft** — ordering hint only; never gates apply.
+
+Composable reconcile labels overlay on `Reconcile.Outcome`:
+
+- `waiting-on-parent` — at least one hard parent has not yet been applied.
+- `blocked-by-parent` — at least one hard parent is in a terminal-failure verdict.
+- `stale-parent-applied` — a hard parent was updated after the child's last reconcile.
+- Compound: when the child's own outcome is `blocked-requires-human` AND `blocked-by-parent` is set, `EffectiveOutcome` reports `blocked-by-parent-and-needs-resolution` (display-only — programmatic decisions still read `Outcome` and `Labels` separately).
+
+Recipe operations may set `created_by: "<parent-slug>"` to declare DAG provenance. From v0.6.0 this is a **live apply-time gate**: `tpatch apply --mode execute` rejects an operation whose `created_by` parent is missing from `depends_on` (hard fail in execute, downgraded to a warning in `--dry-run` per PRD §4.3).
+
+Removing a feature with downstream dependents requires `--cascade`:
+
+- `tpatch remove <slug>` — refuses if any dependent exists.
+- `tpatch remove <slug> --cascade` — TTY confirms, then removes leaves first (reverse-topological order).
+- `tpatch remove <slug> --cascade --force` — required for non-TTY use.
+- **`--force` alone never bypasses the dep-integrity gate** — it only suppresses the TTY confirm prompt (PRD §3.7, ADR-011 D7).
+
+Toggle the whole feature with `features_dependencies: true|false` in `.tpatch/config.yaml` (default `true` from v0.6.0).
 
 ## Reconcile Phase 3.5 — Provider-assisted conflict resolution (v0.5.0)
 
