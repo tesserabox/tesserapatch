@@ -2,6 +2,36 @@
 
 All notable changes to tpatch are recorded here.
 
+## v0.6.0 — 2026-04-26 — Feature Dependencies (Tranche D)
+
+First user-facing release of the feature-dependency DAG. Features can now declare hard / soft parents; apply, reconcile, status, and remove all observe the graph. Default-on (toggle via `features_dependencies: false`). PRD: `docs/prds/PRD-feature-dependencies.md` · ADR: `docs/adrs/ADR-011-feature-dependencies.md` · User reference: `docs/dependencies.md`.
+
+### Added
+
+- **M14.1 — Schema + validator (`internal/store`)** — `status.json` gains `depends_on: [{slug, kind, satisfied_by?}]` (omitempty round-trip). `Config.FeaturesDependencies` (`features_dependencies: true|false` in `.tpatch/config.yaml`). Pure DAG primitives: `DetectCycles`, `TopologicalOrder`, `Children`. Validator (`ValidateDependencies` / `ValidateAllFeatures`) with five sentinel errors: self-dep, dangling, kind-conflict, cycles, satisfied_by-requires-upstream-merged. Atomic edit semantics (rejected change leaves store untouched).
+- **M14.2 — Apply gate + ordering (`internal/workflow`)** — `tpatch apply --mode execute` checks each hard parent before any file mutation; lists unsatisfied parents with their states. Soft parents never gate. Recipe-level `created_by` field on every operation: declares "this op was authored by parent feature X", validated against the recipe's `depends_on`. Cycle-aware traversal everywhere; `RunImplement` and `RunApply` topo-sort dependents.
+- **M14.3 — Reconcile labels + compound presentation (`internal/store`, `internal/workflow`)** — Three composable labels overlayed on `Reconcile.Outcome`: `waiting-on-parent`, `blocked-by-parent`, `stale-parent-applied`. `EffectiveOutcome()` reports the compound string `blocked-by-parent-and-needs-resolution` when the child's intrinsic outcome is `blocked-requires-human` AND `blocked-by-parent` is set (display-only — programmatic decisions still read `Outcome` and `Labels` separately). Source-truth guard: all DAG/label code reads `status.Reconcile.Outcome` via `store.LoadFeatureStatus`, NEVER `artifacts/reconcile-session.json` (ADR-010 D5). Adversarial test pins this.
+- **M14.4 chunk A — `tpatch status --dag`** — ASCII renderer (hard `─►`, soft `┄►`) with full-graph and scoped-to-slug modes; `--json` flag emits a structured shape for harnesses. Cycle-safe (corrupted graph degrades to flat list with `⚠ cycle detected` warning rather than recursing).
+- **M14.4 chunk B — Default flip** — `features_dependencies` now defaults to **true** when the key is absent. `Init()` template writes the explicit `true`. v0.5.3 byte-identity preserved by setting `features_dependencies: false`.
+- **M14.4 chunk C — Dependency-management CLI** — New verb tree `tpatch feature deps [<slug> [add|remove] <parent>[:hard|:soft]] | --validate-all`. `tpatch amend <slug> --depends-on <parent>[:kind] / --remove-depends-on <parent>` (deps-only mode skips request.md rewrite). `tpatch remove <slug> --cascade` performs reverse-topo deletion with TTY confirm; `--cascade --force` skips the prompt for non-TTY use. **`--force` alone never bypasses the dep-integrity gate** (PRD §3.7, ADR-011 D7).
+- **M14.4 chunk D — Status-time validation** — `tpatch status` (with or without `--dag`) re-runs `ValidateAllFeatures` and surfaces every cycle / dangling / kind-conflict inline.
+- **M14.4 chunk E — 6-skill rollout** — All six shipped skill formats (Claude, Copilot, Copilot Prompt, Cursor, Windsurf, Generic workflow) updated atomically with the dependency surface. `created_by` description updated from "inert" (v0.5.x) to live apply-time gate (v0.6.0+) with the dry-run downgrade noted. Parity guard (`assets_test.go`) holds.
+- **M14.4 chunk F — User reference** — `docs/dependencies.md` covers edge model, declaration paths, validation rules, apply-time gate, `created_by` op-level gate, reconcile labels, compound verdict, `status --dag` examples, `--cascade` contract, migration, and the explicit out-of-scope list.
+
+### Changed
+
+- `tpatch apply --mode execute` now **fails fast** when an op's `created_by` parent is missing from `depends_on` or when a hard parent is unsatisfied. `tpatch apply --dry-run` downgrades the missing-hard-parent miss to a **warning** so operators can inspect the planned changes; recipe-shape errors (parent absent from `depends_on`, unknown kind) remain hard in both modes (PRD §4.3).
+- `Reconcile.Labels` is now persisted on `status.json` (omitempty — empty slices round-trip to `nil`).
+- `tpatch status` topology and presentation are unchanged on dependency-free repos; the new label / DAG output only appears when relevant.
+
+### Notes
+
+- **Version**: bumped to `0.6.0` in `internal/cli/cobra.go`.
+- **No new external Go dependencies**; stdlib + `cobra/pflag` only.
+- **No tag is created in this commit** — supervisor performs the `v0.6.0` tag at closeout.
+- **Backward compatibility**: a v0.5.3 repo that does not declare any `depends_on` continues to round-trip byte-identical and behaves exactly as before. Setting `features_dependencies: false` in `.tpatch/config.yaml` restores full v0.5.3 semantics for projects that pin tpatch behaviour by SHA.
+- **Out of scope for v0.6.0** (deferred): provider-assisted parent-patch injection in the M12 resolver (ADR-011 D8); auto-inference of `created_by` from file paths (PRD §4.3.1); soft-only cascade modes.
+
 ## v0.5.3 — Shadow Accept Accounting Fixes (Tranche C3)
 
 Three follow-up findings from an external reviewer on the v0.5.2 shadow-accept flow. One silent correctness regression (manual `reconcile --accept` broken after shadow-awaiting), one missing end-to-end regression test, one status-metadata inconsistency that would mis-feed M14.3 DAG label composition.

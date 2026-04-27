@@ -172,7 +172,7 @@ Code-review verdict: APPROVED. See `docs/supervisor/LOG.md`.
 
 **Scope**: Inline — no separate milestone file for polish tranches.
 
-## M14 — Feature Dependencies / DAG (Tranche D, v0.6.0) 🔨
+## M14 — Feature Dependencies / DAG (Tranche D, v0.6.0) ✅
 
 **Goal**: Stacked / dependent features with hard vs soft semantics, topological reconcile, composable derived labels (`waiting-on-parent` + `blocked-by-parent`), cascade-remove, and amend-invalidation tracking.
 
@@ -188,7 +188,7 @@ Code-review verdict: APPROVED. See `docs/supervisor/LOG.md`.
 - **M14.3** — reconcile topological traversal + composable labels + compound verdict (~500 LOC). Kahn planner, label composition matrix, `blocked-by-parent-and-needs-resolution` compound verdict, M12 interaction. ✅ APPROVED (commits `7c9aee4`, `bccf5e2`, `b9efd07`, `a232a7b`, `4e39384`).
 - **M14 correctness pass** — three external-reviewer findings before the M14.4 cutover. F1 (HIGH, was cutover-blocking): wire `created_by` apply-time gate via new `ErrPathCreatedByParent` sentinel, closing the M14.2 gap. F2: clear stale-parent-applied label after a clean reconcile (label/AttemptedAt consistency). F3: suppress parent-derived labels when child outcome is `ReconcileUpstreamed`. ✅ APPROVED (commits `cbe2873`, `071c5ed`, `cc95cbb`, `1e0d064`).
 - **C5 fix-pass** — re-review caught two real gaps in the correctness pass. F1 (HIGH): F3 only fired on already-persisted upstreamed status, not the in-flight reconcile-time persistence path; fixed by short-circuiting label composition in `saveReconcileArtifacts` on `result.Outcome ∈ childRetiredOutcomes`. F2 (MEDIUM): PRD §4.3 contract drift — dry-run was erroring on hard-parent `created_by` misses; now downgrades to a warning while apply still errors. ✅ APPROVED (commits `c84c7a6`, `dd72c2c`, `ea94fb7`).
-- **M14.4** — `status --dag`, skills analyze-phase bullet, `docs/dependencies.md`, tag v0.6.0 (~300 LOC).
+- **M14.4** — user-facing cutover (~1100 LOC across 7 chunks A–G). Chunk A: `tpatch status --dag` (ASCII + `--json`, scoped + full, cycle-safe). Chunk B: `features_dependencies` default flipped to true. Chunk C: `tpatch feature deps` verb tree + `amend --depends-on/--remove-depends-on` + `remove --cascade` (with the `--force ≠ bypass` rule per PRD §3.7 / ADR-011 D7). Chunk D: status-time `ValidateAllFeatures` warnings inline. Chunk E: 6-skill rollout with `created_by` reframed as live apply-time gate. Chunk F: `docs/dependencies.md` user reference. Chunk G: v0.6.0 release (version bump, CHANGELOG, ROADMAP). Tag is supervisor's closeout action. ✅ implementation complete (commits `d1aca5f`, `ca23b35`, `5d5f594`, `97a994f`, `e0a7d47`, plus this release commit).
 
 **Out of scope** (v0.6.x follow-ups): auto-rebase on parent drift (`feat-feature-autorebase`), parent-patch context for resolver (`feat-resolver-dag-context`), per-dep version ranges (`feat-patch-compatibility`), stacked-PR delivery (`feat-delivery-modes`).
 
@@ -197,7 +197,6 @@ Code-review verdict: APPROVED. See `docs/supervisor/LOG.md`.
 - Cost tracking and token budgeting
 - Multi-repo orchestration
 - Web dashboard
-- Feature dependency DAG (`feat-feature-dependencies`)
 - Recipe modernization (`feat-recipe-schema-expansion`, `feat-record-autogen-recipe`)
 - Parallel feature workflows
 
