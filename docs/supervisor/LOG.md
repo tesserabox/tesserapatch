@@ -1,3 +1,60 @@
+## Review — M15-W3-SLICE-A — 2026-04-27
+
+**Reviewer**: m15-w3-slice-a-reviewer
+**Task**: Wave 3 Slice A — verify cobra shell + V0–V2 + freshness writer
+**Commits reviewed**: 8e2aabe (tracking) + 41cc4aa (code)
+
+### Constraint compliance
+- [x] D1 — Verify sub-record on FeatureStatus, FeatureState unchanged
+- [x] D2 — apply gate untouched (`dependency_gate.go` unmodified)
+- [x] D3 — only `verify` is a writer
+- [x] D4 — omitempty round-trip byte-identical for never-verified
+- [x] D5 — no read-path mutation
+- [x] D6 — Verify in status.json, not from reconcile-session.json
+- [x] D7 — verify is read-only on the working tree
+- [x] Note 1 — CheckResults not persisted (stdout only)
+- [x] Note 2 — V2 absent-recipe handled
+- [x] Note 3 — 6 skill stubs present + parity guard green
+- [x] Slice A boundary — no --all, no --shadow, no closure replay, no ComposeLabels, V3–V9 stubbed
+- [x] gofmt -l . clean
+- [x] go test ./... passes
+- [x] go build ./cmd/tpatch succeeds
+- [x] commit trailers present
+
+### Findings
+
+#### Blocking
+
+**Issue: Parent Snapshot Records Empty String for Missing Parent**
+**File:** `internal/workflow/verify.go:408`
+**Severity:** High
+
+The `parentSnapshot` function records an empty string (`""`) when a parent feature's `LoadFeatureStatus` fails (line 408: `out[slug] = ""`). This creates an invalid `FeatureState` value in the persisted `parent_snapshot` map.
+
+**Problem:** `FeatureState` is a typed enum with defined values (`requested`, `applied`, `upstream_merged`, etc.). An empty string is not a valid `FeatureState` and will cause runtime failures in Slice B's freshness derivation when it attempts to match against the enum.
+
+**Evidence:** The code comment says "record empty state literal so freshness derivation can flip to verified-stale rather than crash," but an empty string will **still** cause the derivation to crash when it tries to compare against the `FeatureState` enum in the `satisfies_state_or_better` rules (ADR-013 lines 167–172).
+
+**Impact:** Any feature with a hard dependency on a parent that doesn't exist (e.g., user deletes parent's status.json manually, or declares a dep on a typo'd slug) will persist an invalid `parent_snapshot` that cannot be safely read in Slice B.
+
+**Suggested fix:** Use a sentinel value that's actually a valid `FeatureState`, or explicitly document that missing parents should be skipped from `parent_snapshot` entirely (return `nil` entry or omit the key). The latter is cleaner: if the parent doesn't exist, the snapshot shouldn't contain it. Alternatively, fail the verify run with a check result indicating the broken dependency.
+
+### Verdict: NEEDS REVISION
+
+### Notes
+
+1. **Empty state handling choice needed.** The implementer must choose one of: (a) omit missing parents from `parent_snapshot` entirely (don't add the key to the map), (b) use a valid `FeatureState` sentinel like `StateBlocked`, or (c) add a V3-level check that fails if any hard parent is missing at verify time. Choice (a) is cleanest: a missing parent shouldn't appear in the snapshot at all.
+
+2. **Test coverage observation.** No test exercises the "parent doesn't exist" edge case. After fixing the issue above, add a test that creates a feature with a hard dep on a non-existent slug, runs verify, and confirms the persisted `parent_snapshot` is either `nil` or omits the missing parent's key.
+
+3. **Hash determinism confirmed.** SHA-256 hex of file bytes is stable and tested by the round-trip tests. No issue.
+
+4. **Path safety.** `verify.go` uses only `os.ReadFile` and `os.Stat` on paths constructed from `s.Root` + well-known subdirs. No user-controlled path input reaches the filesystem without going through store primitives that already call `EnsureSafeRepoPath` in write paths. Read-only nature confirmed (D7).
+
+5. **Skill stubs confirmed present.** All six surfaces have the one-line EXPERIMENTAL bullet. Parity guard passes. Note 3 satisfied.
+
+6. **Tracking accuracy.** CURRENT.md lists 14 files; `git show 41cc4aa --stat` matches exactly. Co-author trailers present on both commits.
+
 ## Review — M15-W3-REDESIGN — 2026-04-27
 
 **Reviewer**: m15-w3-redesign-reviewer
