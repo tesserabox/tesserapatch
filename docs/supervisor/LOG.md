@@ -1,3 +1,37 @@
+## Re-review — M15-W3-SLICE-A — 2026-04-27
+
+**Reviewer**: m15-w3-slice-a-reviewer-2
+**Task**: M15-W3-SLICE-A revision verification
+**Commit reviewed**: a4b4262 (revision on top of 8e2aabe + 41cc4aa)
+
+### Revision verification
+- [x] Missing parents omitted from map (not "", not sentinel)
+- [x] TestParentSnapshot_MissingParentOmitted asserts key absence
+- [x] TestParentSnapshot_AllParentsMissingReturnsNil consistent with omitempty
+- [x] TestParentSnapshot_SoftDepsExcluded regression guard intact
+- [x] Diff scope: only verify.go + verify_test.go + CURRENT.md
+- [x] gofmt -l . clean / go test ./... passes / go build clean
+- [x] Co-author trailer present
+
+### Findings
+
+None.
+
+### Verdict: APPROVED
+
+### Notes
+
+The fix correctly addresses the blocking finding. Missing parents are now omitted from the `parent_snapshot` map entirely (lines 420-421: `continue` on error), not recorded as empty strings. The `parentSnapshot` function also returns `nil` when the result map would be empty (lines 425-427), preserving the `omitempty` round-trip contract.
+
+Test quality is excellent:
+- `TestParentSnapshot_MissingParentOmitted` (lines 400-402) correctly asserts the missing slug is NOT present as a key using the `_, ok := snap["parent-b"]; ok` pattern, and fails with a clear message referencing the bug being fixed.
+- `TestParentSnapshot_AllParentsMissingReturnsNil` (line 426) verifies the nil-return contract.
+- `TestParentSnapshot_SoftDepsExcluded` (line 454) confirms the existing soft-dep filtering behavior is intact.
+
+All validation gates pass. The commit diff is exactly the three expected files. Revision is complete and correct.
+
+---
+
 ## Review — M15-W3-SLICE-A — 2026-04-27
 
 **Reviewer**: m15-w3-slice-a-reviewer
