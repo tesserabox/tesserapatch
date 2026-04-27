@@ -464,6 +464,9 @@ func implementCmd() *cobra.Command {
 			if noRetry, _ := cmd.Flags().GetBool("no-retry"); noRetry {
 				ctx = workflow.WithDisableRetry(ctx, true)
 			}
+			if noInfer, _ := cmd.Flags().GetBool("no-created-by-infer"); noInfer {
+				ctx = workflow.WithDisableCreatedByInference(ctx, true)
+			}
 
 			if err := workflow.RunImplement(ctx, s, args[0], prov, cfg); err != nil {
 				return err
@@ -474,6 +477,7 @@ func implementCmd() *cobra.Command {
 	}
 	cmd.Flags().Duration("timeout", 90*time.Second, "Timeout")
 	cmd.Flags().Bool("no-retry", false, "Disable retry-with-feedback on invalid LLM output")
+	cmd.Flags().Bool("no-created-by-infer", false, "Disable advisory created_by inference for replace-in-file ops (PRD §4.3.1)")
 	addManualFlag(cmd)
 	return cmd
 }

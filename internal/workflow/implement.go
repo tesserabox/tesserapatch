@@ -136,6 +136,16 @@ Output ONLY valid JSON: {"feature": "<slug>", "operations": [...]}`
 			return err
 		}
 	} else {
+		// Implement-time `created_by` inference (PRD §4.3.1, M15.1).
+		// Advisory only — the recipe is never mutated. Suggestions
+		// land on WarnWriter for operator review. Best-effort: a
+		// failure here must not block recipe persistence (the apply
+		// path has its own gate), so we surface the error as a
+		// warning and continue.
+		if ierr := inferCreatedBy(ctx, s, slug, recipe); ierr != nil {
+			fmt.Fprintf(WarnWriter,
+				"warning: created_by inference skipped: %v\n", ierr)
+		}
 		data, _ := json.MarshalIndent(recipe, "", "  ")
 		if err := s.WriteArtifact(slug, "apply-recipe.json", string(data)+"\n"); err != nil {
 			return err
