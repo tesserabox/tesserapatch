@@ -206,6 +206,68 @@ func TestValidateAllFeatures_SatisfiedByUnreachable(t *testing.T) {
 	}
 }
 
+// TestValidateDependencies_SatisfiedByGitError pins the "bogus ref / git failure"
+// branch: when isAncestor returns a real error (not just (false, nil)), the
+// validator must surface a wrapped error that includes (1) the dependent slug,
+// (2) the parent slug, and (3) the underlying git error — and must NOT collapse
+// to ErrSatisfiedBySHANotReachable, because the two signals mean different things
+// (unreachable = forged SHA; git error = malformed ref or env break).
+func TestValidateDependencies_SatisfiedByGitError(t *testing.T) {
+	gitErr := errors.New("fatal: bad revision 'fabricated'")
+	defer stubIsAncestor(t, false, gitErr)()
+	s := newStoreWith(t, map[string]FeatureState{
+		"parent": StateUpstreamMerged,
+		"child":  StateRequested,
+	})
+	deps := []Dependency{{Slug: "parent", Kind: DependencyKindHard, SatisfiedBy: "fabricated"}}
+	err := ValidateDependencies(s, "child", deps)
+	if err == nil {
+		t.Fatal("want error from git failure path, got nil")
+	}
+	if errors.Is(err, ErrSatisfiedBySHANotReachable) {
+		t.Fatalf("git error must NOT collapse to ErrSatisfiedBySHANotReachable, got %v", err)
+	}
+	if !errors.Is(err, gitErr) {
+		t.Fatalf("want wrapped underlying git error, got %v", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"child", "parent", "fabricated"} {
+		if !contains(msg, want) {
+			t.Fatalf("error %q must include %q for context", msg, want)
+		}
+	}
+}
+
+func TestValidateAllFeatures_SatisfiedByGitError(t *testing.T) {
+	gitErr := errors.New("fatal: bad revision 'fabricated'")
+	defer stubIsAncestor(t, false, gitErr)()
+	s := newStoreWith(t, map[string]FeatureState{
+		"parent": StateUpstreamMerged,
+		"child":  StateRequested,
+	})
+	st, _ := s.LoadFeatureStatus("child")
+	st.DependsOn = []Dependency{{Slug: "parent", Kind: DependencyKindHard, SatisfiedBy: "fabricated"}}
+	if err := s.SaveFeatureStatus(st); err != nil {
+		t.Fatal(err)
+	}
+	errs := ValidateAllFeatures(s)
+	if len(errs) == 0 {
+		t.Fatal("want at least one error from git failure path, got none")
+	}
+	var matched error
+	for _, e := range errs {
+		if errors.Is(e, gitErr) {
+			matched = e
+		}
+		if errors.Is(e, ErrSatisfiedBySHANotReachable) {
+			t.Fatalf("git error must NOT collapse to ErrSatisfiedBySHANotReachable, got %v in %v", e, errs)
+		}
+	}
+	if matched == nil {
+		t.Fatalf("want wrapped underlying git error in %v", errs)
+	}
+}
+
 func TestValidateDependencies_InvalidKind(t *testing.T) {
 	s := newStoreWith(t, map[string]FeatureState{
 		"parent": StateApplied,
