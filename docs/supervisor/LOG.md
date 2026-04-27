@@ -4,6 +4,38 @@
 
 ---
 
+## Review — M15-W1 — 2026-04-26
+
+**Reviewer**: m15-w1-reviewer (code-review)
+**Task**: Wave 1 — feat-satisfied-by-reachability + chore-skill-frontmatter + feat-define-spec-alias
+**Diff range**: `1736c4d..192935b`
+
+### Checklist
+- [x] Compiles (go build ./cmd/tpatch)
+- [x] Tests pass (go test ./...)
+- [x] Formatted (gofmt -l .)
+- [x] Parity guard green
+- [x] Source-truth guard (ADR-011 D6) preserved
+- [x] No new parity anchor for the spec alias
+- [x] Frontmatter doesn't break loader expectations
+- [x] Reachability check gated correctly (no double-fail)
+
+### Verdict: APPROVED WITH NOTES
+
+### Findings
+
+- **Medium** / `internal/store/validation_test.go` — Missing test coverage for git error path (when isAncestor returns non-nil error). The implementer flagged this as judgment call #2 requiring explicit verification: "Bogus refs surface as wrapped errors, not as silent `ErrSatisfiedBySHANotReachable`." The `TestIsAncestor` in `gitutil_test.go` covers the git-level error case, but there's no validation-level test that exercises `stubIsAncestor(t, false, errors.New("git failure"))` to verify the wrapped error includes the dependent slug and doesn't silently ignore git failures. Current tests only stub `(true, nil)`, `(false, nil)`. **Fix**: Add `TestValidateDependencies_SatisfiedByGitError` that stubs `isAncestor` to return `(false, fmt.Errorf("bad ref"))` and asserts the validation error wraps it with the expected "verify satisfied_by reachability for <slug> -> <parent>" prefix.
+
+All other flagged items verified:
+1. **Double-fail avoidance**: Both `ValidateDependencies` (L76-90) and `ValidateAllFeatures` (L144-154) gate reachability check on `parent.State == StateUpstreamMerged`, so `ErrSatisfiedByRequiresUpstream` fires alone when parent is not upstream_merged. ✅
+2. **IsAncestor exit semantics**: Correctly implemented at `gitutil.go:633-650`. Exit 0 → `(true, nil)`, exit 1 → `(false, nil)`, other → `(false, wrapped error with stderr)`. Error wrapping includes ancestor/descendant in message. ✅
+3. **Real-git test coverage**: `TestIsAncestor` (gitutil_test.go:210-255) exercises all three paths: reachable (L244), unreachable (L248), bogus-ref error (L252). Uses real git repo, not stubs. ✅
+
+### Action Taken
+Verdict logged. Supervisor decides closeout / Wave 2 dispatch.
+
+---
+
 ## Review — M15.1 — 2026-04-26
 
 **Implementer**: m15-1-implementer (general-purpose, ~6.5min per handoff notes)
