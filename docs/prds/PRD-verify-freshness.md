@@ -1,6 +1,6 @@
 # PRD — `tpatch verify` and verification freshness overlay
 
-**Status**: Draft (M15 Wave 3 design — Git-like freshness redesign; supersedes `docs/prds/PRD-verify-and-tested-state.md`)
+**Status**: Approved (M15 Wave 3 — APPROVED WITH NOTES at commit 3c122aa; Slice A in implementation. Supersedes `docs/prds/PRD-verify-and-tested-state.md`.)
 **Date**: 2026-04-27
 **ADR**: **ADR-013-verify-freshness-overlay.md — REQUIRED before Wave 3 implementation slices ship.** ADR-013 supersedes ADR-012 in full.
 **Owner**: Core

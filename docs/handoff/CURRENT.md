@@ -2,84 +2,68 @@
 
 ## Active Task
 
-- **Task ID**: M15-W3-REDESIGN
-- **Milestone**: M15 → Wave 3 (lifecycle / reconcile semantics tranche) — **redesign in flight**
-- **Description**: Re-review the freshness-overlay design package (PRD-verify-freshness.md + ADR-013) before any Slice A code dispatch. This is a design supersession of the v0.6.1-era tested-as-state model.
-- **Status**: In Progress — design package landed, awaiting reviewer pass
+- **Task ID**: M15-W3-SLICE-A
+- **Milestone**: M15 → Wave 3 (lifecycle / reconcile semantics tranche) — **Slice A implementation**
+- **Description**: Implement the Slice A surface of the approved freshness-overlay design: `tpatch verify <slug>` cobra shell with four flags, V0/V1/V2 real check implementations, V3–V9 stubs (the full 10-check array still appears in the report so the shape is reviewable now), `Verify *VerifyRecord` field on `FeatureStatus` with `omitempty`, and minimal EXPERIMENTAL skill stubs to keep the parity guard green.
+- **Status**: In Progress
 - **Assigned**: 2026-04-27
 
-## Why Wave 3 was reopened
+## Binding context
 
-An external re-review of the approved Wave 3 design (commit `8c3d72e`) identified two structural problems that survived the prior implementer/reviewer cycle:
+- **Redesign approved**: `origin/main` at commit `3c122aa` — APPROVED WITH NOTES.
+- **Design contract**: `docs/prds/PRD-verify-freshness.md` (Approved) + `docs/adrs/ADR-013-verify-freshness-overlay.md` (Accepted). Do **not** reopen the model. The freshness overlay is locked.
+- **Reviewer notes (from `docs/supervisor/LOG.md` top entry, binding implementation guidance for this slice)**:
+  - **Note 1 — persisted CheckResults bloat**. Implementer choice. Disposition: **drop** the per-check array from the persisted `VerifyRecord` and emit it only in the `--json` stdout report. Persisted record carries only `verified_at`, `passed`, `recipe_hash_at_verify`, `patch_hash_at_verify`, `parent_snapshot`.
+  - **Note 2 — V2 absent recipe**. Disposition: V2 (`apply-recipe.json` parses + op targets resolve) treats an absent recipe as `passed: true, skipped: true, reason: "no apply-recipe.json (legacy / pre-autogen-era feature)"`. No false-fail; no crash.
+  - **Note 3 — parity-guard handling**. Disposition: add minimal one-sentence EXPERIMENTAL `tpatch verify` stubs to all six skill surfaces. Full skill copy lands in Slice D; Slice A only has to keep `assets/assets_test.go` green.
 
-- **F1**: V7/V8 shadow replay ignored the hard-parent topological closure, so verify would have been structurally meaningless for any non-leaf feature with a locally-`applied` parent.
-- **F4**: The design conflated lifecycle (sticky, write-by-explicit-verb) with verification freshness (drift-sensitive), routing a "parent-state hook" through `LoadFeatureStatus`. That would have meant `tpatch status` silently mutates `.tpatch/`.
+## Hard rules in force for this slice
 
-Plus two CURRENT.md drift findings (F2: invented `Tested *TestedRecord` field; F3: Slice A boundary misaligned).
+- Apply gate stays untouched (`internal/workflow/dependency_gate.go` not modified). ADR-013 D2.
+- Writer lives only on the explicit `verify` verb. No mutation from `LoadFeatureStatus`, `ComposeLabels`, status rendering, or any other read path. ADR-013 D5.
+- `Verify *VerifyRecord` carries `omitempty`; v0.6.1 fixtures that never run verify round-trip byte-identical. ADR-013 D4.
+- Recipe-op JSON schema frozen.
+- Reuse `safety.EnsureSafeRepoPath` for any file-path validation; reuse the existing slug-resolution / store-open helpers (`openStoreFromCmd`).
+- Slice A explicitly **does not** ship: `--all`, `--shadow`, closure replay (V7/V8 stubbed), `ComposeLabels` freshness derivation, full-text skill copy. Slices B/C/D handle those.
 
-The supervisor's binding adjudication: redesign with **Git-like semantics**. Lifecycle stays the lifecycle. Verification becomes a derived freshness overlay with a small persisted record. Read paths never mutate state.
+## Session Summary
 
-## What landed in the redesign package
+(populated as work proceeds)
 
-- **`docs/prds/PRD-verify-freshness.md`** (new, ~687 lines) — successor PRD. Freshness-overlay model, V7/V8 closure-replay spec, four derived labels, five JSON examples, four corrected slice boundaries.
-- **`docs/adrs/ADR-013-verify-freshness-overlay.md`** (new, ~289 lines) — successor ADR. D1–D7 in the rewritten order. Includes a **supersession map** of every prior D1–D7 disposition: D1 REPLACED, D2 DROPPED, D3 REPLACED (mostly retained), D4 RETAINED, D5 DROPPED (no transitions), D6 RETAINED, D7 RETAINED + EXTENDED.
-- **`docs/prds/PRD-verify-and-tested-state.md`** — predecessor PRD, SUPERSEDED banner added; preserved as historical record.
-- **`docs/adrs/ADR-012-feature-tested-state.md`** — predecessor ADR, SUPERSEDED banner added; preserved as historical record.
-- **`docs/handoff/HISTORY.md`** — top entry archives the prior idle CURRENT.md and the reopening rationale.
-- **`docs/supervisor/LOG.md`** — top entry records the reopening + the binding non-negotiables for the redesign.
+## Current State
 
-## Locked design contract (ADR-013, binding for all Wave 3 code)
+(populated as work proceeds)
 
-- **D1** — `verify` writes a `Verify` sub-record on `FeatureStatus`. `FeatureState` enum unchanged. No new lifecycle state.
-- **D2** — apply gate is pure-lifecycle. Satisfaction set remains `{applied, upstream_merged}`. Freshness is a harness signal, not a gate input.
-- **D3** — `verify` writes the freshness record; `amend` invalidates by clearing it; `test` does not write.
-- **D4** — `Verify` sub-record carries `omitempty` on every nested field; v0.6.1 repos round-trip byte-identical until verify runs once.
-- **D5** — derived label transitions only: `never-verified` / `verified-fresh` / `verified-stale` / `verify-failed`, recomputed at read time in `ComposeLabels`. No persisted transitions.
-- **D6** — `Verify` lives in `status.json`; never inferred from `artifacts/reconcile-session.json`. Reuses ADR-011 D6 source-truth guard.
-- **D7** — `verify` is read-only on the working tree; shadow simulation includes hard-parent topological closure replay (the F1 fix).
+## Files Changed
 
-## Pre-revision adjudications still binding (Q1–Q5)
-
-- **Q1**: V9 severity = warn (default).
-- **Q2**: `verify --all` skips pre-apply slugs with `"skipped: pre-apply state"` reason line.
-- **Q3**: `passed: false` field name retained.
-- **Q4**: SUPERSEDED by F4. The "does tested satisfy hard deps" question is moot because there is no `tested` lifecycle state.
-- **Q5**: parent-state hook becomes pure read-time label recomputation in `ComposeLabels` (not a writer). Resolved by F4.
-
-## Files Changed (this redesign pass)
-
-- `docs/prds/PRD-verify-freshness.md` (created)
-- `docs/adrs/ADR-013-verify-freshness-overlay.md` (created)
-- `docs/prds/PRD-verify-and-tested-state.md` (SUPERSEDED banner added)
-- `docs/adrs/ADR-012-feature-tested-state.md` (SUPERSEDED banner added)
-- `docs/handoff/CURRENT.md` (this file — rewritten for the active redesign)
-- `docs/handoff/HISTORY.md` (top-entry archive of the superseded design + idle CURRENT)
-- `docs/supervisor/LOG.md` (top-entry reopening note)
+(populated as work proceeds)
 
 ## Test Results
 
-N/A — design-only. The next code dispatch (Slice A, gated on this redesign's approval) will run the standard `go test ./... && go build ./cmd/tpatch && gofmt -l .` gate.
+(populated as work proceeds)
 
 ## Next Steps
 
-1. **Reviewer dispatch** — `m15-w3-redesign-reviewer` (`code-review` agent, background). Focus areas:
-   - Internal consistency of PRD ↔ ADR-013 (especially D1, D5, D7 + the closure-replay spec).
-   - Adherence to the binding non-negotiables (lifecycle untouched, no read-path mutation, apply gate stays pure-lifecycle, freshness record minimal).
-   - Supersession-map completeness: every old D1–D7 has a clear retained / replaced / dropped disposition with reasoning.
-   - Slice boundaries: each of A/B/C/D is independently shippable.
-   - Failure-mode coverage: closure-replay JSON shape, parent-snapshot derivation, amend-invalidation semantics.
-2. **Hard gate** — do NOT auto-dispatch Slice A. The user gates on the reviewer verdict.
-3. After approval: archive M15-W3-REDESIGN to HISTORY.md, dispatch Slice A implementer with a tight per-slice contract referencing ADR-013 + PRD-verify-freshness.md.
+1. Add `VerifyRecord` + `VerifyCheckResult` to `internal/store/types.go`. Persisted record carries the minimal field set per Note 1.
+2. Add `Verify *VerifyRecord` field to `FeatureStatus` with `omitempty`.
+3. Add `internal/workflow/verify.go` with `RunVerify(...) (*VerifyReport, error)`, V0/V1/V2 real implementations, V3–V9 stubs, full 10-check JSON report builder, parent-snapshot derivation.
+4. Add `verifyCmd` to `internal/cli/cobra.go` (style: `applyCmd` / `recordCmd`).
+5. Add minimal EXPERIMENTAL `tpatch verify` line to all six skill surfaces.
+6. Add tests: V0/V1/V2 pass+fail, V2 absent recipe, `--no-write` honoured, `--json` shape, omitempty round-trip.
+7. Run `gofmt -l . && go test ./... && go build ./cmd/tpatch && rm -f tpatch`.
+8. Update CURRENT.md with Slice B/C/D remaining-work bullets and `Status: Awaiting external review`.
 
 ## Blockers
 
-None — the package is review-ready.
+None — Slice A scope is precisely defined by PRD §9 + reviewer notes.
 
 ## Context for Next Agent
 
-- v0.6.1 is shipped (`origin/main` tag `v0.6.1`, commit `572a038`).
-- Wave 3 is in **redesign**, not implementation. Slice A is **deliberately not dispatched.**
-- Reading order for any new agent: ADR-013 first (architecture), PRD-verify-freshness.md second (operational detail), HISTORY.md 2026-04-27 entry third (why this shape was chosen).
-- Hard rules still binding: ADR-010 D5 (source-truth guard), ADR-011 D6 (status-as-truth), recipe-op JSON schema frozen, `omitempty` round-trip, secret-by-reference, no nested map keys in YAML config.
-- The `tpatch` root binary is not gitignored; `rm -f tpatch` after any local `go build`.
-- Sub-agent self-reviews are status-only signals. Always run an external review before approving anything non-trivial. The Wave 3 reopening is a textbook example.
+- Read order if you arrive cold: PRD-verify-freshness.md §3.4 + §4 + §9 (Slice A row), ADR-013 D1/D4/D5/D7, then `docs/supervisor/LOG.md` top entry for the three notes.
+- The stub semantics for V3–V9 are: `passed: true, skipped: true, reason: "not yet implemented (Slice <X>)"`. The full 10-check array still emits in `--json`; only the persisted record is trimmed.
+- Persisted record minimal field set is the disposition for Note 1. The full check array round-trips via stdout, never through `status.json`.
+- Closure-replay primitive (V7/V8) is Slice C; Slice A's V7/V8 are stubs.
+- `composeLabelsFromStatus` is **not** extended in this slice (Slice B). The four derived freshness labels (`never-verified` / `verified-fresh` / `verified-stale` / `verify-failed`) are not wired into `tpatch status` yet.
+- The `tpatch` root binary is not gitignored. `rm -f tpatch` after `go build`.
+- Every commit must carry the `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` trailer.
+- This task ends with `Status: Awaiting external review` — do **not** self-approve. Supervisor + user gate before push.
