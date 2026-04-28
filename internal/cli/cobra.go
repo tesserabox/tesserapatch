@@ -24,10 +24,19 @@ import (
 const version = "0.6.1"
 
 // Execute runs the tpatch CLI root command.
+//
+// Most command errors collapse to exit 1. Commands that need a binding
+// non-1 exit code (currently only `tpatch verify`, per
+// PRD-verify-freshness §6 Q7) return an *ExitCodeError; we surface that
+// code here so harnesses can treat verify-failed (exit 2) as distinct
+// from a generic CLI error (exit 1).
 func Execute() int {
 	rootCmd := buildRootCmd()
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		if e := asExitCodeError(err); e != nil {
+			return e.ExitCode()
+		}
 		return 1
 	}
 	return 0
