@@ -1,3 +1,62 @@
+## Re-review #3 — M15-W3-SLICE-A — 2026-04-27
+
+**Reviewer**: m15-w3-slice-a-reviewer-4
+**Task**: M15-W3-SLICE-A external-review revision 3 verification
+**Commit reviewed**: 8a47078 (on top of full revision stack)
+
+### External-review HIGH finding verification
+[x] Case A — missing slug → exit 2
+[x] Case B — non-tpatch workspace → exit 2
+[x] Case C — V0 abort (corrupt status.json) → exit 2
+[x] Case D — generic cobra error still exits 1 (precision check)
+[x] Three regression tests use Execute() path, not stripped helper
+[x] Stale wording fixed in cli/verify.go + workflow/verify.go
+
+### Cross-cutting (not regressed)
+[x] Refusal still exits 2 without writing
+[x] V1/V2/V3 behavior unchanged
+[x] WriteVerifyRecord call sites correct
+[x] dependency_gate.go unmodified
+[x] Slice A boundary intact
+[x] gofmt / go test / go build clean
+[x] Co-author trailer on 8a47078
+
+### Findings
+
+None.
+
+### Verdict: APPROVED
+
+### Notes
+
+All supervisor findings have been correctly addressed:
+
+**F1 (exit 2 wrapping)**: `verifyCmd.RunE` now wraps both `openStoreFromCmd` errors (lines 57-62 of verify.go) and non-refusal `RunVerify` errors (lines 69-74, 99-104) in `&ExitCodeError{Code: 2}`. The wrapping covers the three previously-leaking error paths: missing slug (surfaces as LoadFeatureStatus error), non-tpatch workspace (openStoreFromCmd failure), and V0 abort (RunVerify non-refusal error from corrupt status.json). The refusal path (lines 96-98) and verdict-failed path (lines 105-113) were already correct in revision 2. Generic cobra errors (e.g., missing slug argument) correctly fall through to legacy exit 1 — Case D confirms the wrapping is precise.
+
+**F2 (regression tests)**: New `internal/cli/verify_test.go` adds three regression tests that use `buildRootCmd().Execute()` directly (lines 17-22 define `runVerifyForExitCode` helper) and assert `errors.As(&ec)` on `*ExitCodeError` (lines 39-45, 59-65, 90-96). The tests correctly avoid the package-level `runCmd` helper which would mask the typed-error plumbing (documented in line 15 comment). All three tests pass and lock in the exit-2 contract. Naming is clear and traces back to PRD §5.
+
+**F3 (stale wording)**: `internal/cli/verify.go` doc block (lines 19-21), cobra Long help text (lines 47-49), and `internal/workflow/verify.go` top-of-file comment (lines 7-9) all corrected. V2 now accurately described as `recipe_parses` only, V3 (`recipe_op_targets_resolve`) acknowledged as Slice C stub, and Slice A scope correctly stated as V0/V1/V2 real. Exit-code contract documented in verify.go lines 31-40.
+
+**Cross-cutting verification**:
+- Refusal path still returns early at line 194 of verify.go before any WriteVerifyRecord call (line 234 only reachable on success/fail path after refusal check).
+- V1 intent check (lines 197-200), V2 strict decode (checkRecipeParses, revision 2 work), V3 deferral (line 209), and V4–V9 stubs all intact.
+- WriteVerifyRecord call site: exactly one at line 234 of verify.go, guarded by `!opts.NoWrite`. Not called on refusal (line 194 early-return), not called on V0 abort (line 169 early-return).
+- dependency_gate.go unmodified (confirmed via `git diff origin/main..main`).
+- Slice A boundary preserved: no `--all`, no `--shadow`, no closure replay, no ComposeLabels integration.
+- Validation clean: `gofmt -l .` empty, `go test ./...` all pass (cached), `go build ./cmd/tpatch` succeeds.
+- Co-author trailer present on 8a47078 (confirmed via `git log`).
+- Diff scope: exactly the four expected files (CURRENT.md, verify.go, verify_test.go, workflow/verify.go).
+
+**Mandatory reproductions**:
+- Case A (missing slug): EXIT=2, error message correct, report includes all 10 checks with V0 abort.
+- Case B (non-tpatch workspace): EXIT=2, error message correct.
+- Case C (V0 abort via corrupt status.json): EXIT=2, error message correct, report shows status_loaded failed.
+- Case D (cobra usage error): EXIT=1 as expected — proves wrapping precision.
+
+No blocking findings. No notes. Revision 3 is complete and correct.
+
+---
+
 ## Re-review #2 — M15-W3-SLICE-A — 2026-04-28
 
 **Reviewer**: m15-w3-slice-a-reviewer-3
