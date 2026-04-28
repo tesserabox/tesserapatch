@@ -192,6 +192,27 @@ Code-review verdict: APPROVED. See `docs/supervisor/LOG.md`.
 
 **Out of scope** (v0.6.x follow-ups): auto-rebase on parent drift (`feat-feature-autorebase`), parent-patch context for resolver (`feat-resolver-dag-context`), per-dep version ranges (`feat-patch-compatibility`), stacked-PR delivery (`feat-delivery-modes`).
 
+## M15 Wave 3 — Verify freshness overlay (v0.6.2 prep)
+
+Successor to the superseded `feat-feature-tested-state` design (ADR-012).
+Replaced the tested-as-state model with a Git-like freshness overlay per
+ADR-013 / PRD-verify-freshness.md after external review surfaced
+lifecycle/freshness conflation. Lifecycle and verification stay separate.
+
+- **Slice A** — `tpatch verify <slug>` cobra shell + V0-V2 real + V3-V9
+  stubs + minimal `Verify` sub-record + minimal EXPERIMENTAL skill
+  stubs. ✅ APPROVED WITH NOTES (commits `8e2aabe`-`bce2252`,
+  ~2026-04-27).
+- **Slice B** — `ReconcileLabel` extension + `composeLabelsFromStatus`
+  freshness derivation + `tpatch status` / `--dag` / `--json`
+  rendering + `tpatch amend` invalidation + truth-table tests.
+  🚧 staged.
+- **Slice C** — V3-V9 real implementations including hard-parent
+  topological closure replay (V7/V8). ⬜
+- **Slice D** — `tpatch verify --all` + 6-skill rollout + parity-guard
+  anchors + `docs/dependencies.md` cross-link + CHANGELOG v0.6.2.
+  ⬜
+
 ## M15+ — Future
 
 - Cost tracking and token budgeting

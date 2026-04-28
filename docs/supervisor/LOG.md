@@ -1,3 +1,35 @@
+## External Supervisor Re-review #4 — M15-W3-SLICE-A — 2026-04-27
+
+**Reviewer**: external supervisor (user)
+**Task**: Slice A revision-3 verification
+**Commit reviewed**: `bce2252` (full stack `8e2aabe..bce2252`)
+
+### Reproductions run
+- Case A — nonexistent feature in initialized workspace → exit 2 ✅
+- Case B — non-tpatch workspace → exit 2 ✅
+- Case C — V0 abort via corrupt status.json → exit 2 ✅
+- Case D — generic cobra usage error → exit 1 ✅ (precision check)
+- Targeted tests: 39/39 passing across the touched CLI/workflow files.
+
+### Findings
+1. **Low (doc only)**: stale V2/V3 wording in early sections of
+   `docs/handoff/CURRENT.md` (lines 17, 36, 100). Pre-revision contract
+   text describing V2 as `recipe_parses + recipe_op_targets_resolve`
+   was not rewritten when the revision sections recorded the shipped
+   boundary. Did not affect code or tests.
+
+### Verdict: APPROVED WITH NOTES
+
+### Action Taken
+- Archived full Slice A `CURRENT.md` (stale lines preserved as audit
+  history) into `HISTORY.md` with retrospective summary.
+- Rewrote `CURRENT.md` for Slice B as the active task.
+- Untracked `docs/whitepapers/` and exploratory PRDs kept out of
+  scope per supervisor instruction.
+- Slice A stack ready to push to `origin/main`.
+
+---
+
 ## Re-review #3 — M15-W3-SLICE-A — 2026-04-27
 
 **Reviewer**: m15-w3-slice-a-reviewer-4
