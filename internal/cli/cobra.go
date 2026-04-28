@@ -799,15 +799,15 @@ func recordCmd() *cobra.Command {
 		Long: `Capture changes as a patch.
 
 Modes:
-  working tree (default):     tpatch record <slug> [--files <paths>]
   committed range (--from):   tpatch record <slug> --from <base> [--to <ref>] [--files <paths>]
   committed range (explicit): tpatch record <slug> --commit-range <a>..<b> [--files <paths>]
+  working tree (default):     tpatch record <slug> [--files <paths>]
 
 Use the committed-range form when feature edits have already been committed
-(e.g. multiple features interleaved on the same branch). --files scopes the
-capture to specific paths in any mode. Committed-range captures never include
-untracked working-tree files — only the committed snapshots at the endpoints
-contribute to the diff.`,
+(e.g. multiple features interleaved on the same branch — the headline use
+case for scoping with --files). --files scopes the capture to specific paths
+in any mode. Committed-range captures never include untracked working-tree
+files — only the committed snapshots at the endpoints contribute to the diff.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slug := args[0]

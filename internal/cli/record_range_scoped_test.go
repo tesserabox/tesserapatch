@@ -224,6 +224,27 @@ func TestRecordCmd_CommitRange_RejectsWithTo(t *testing.T) {
 	}
 }
 
+// TestRecordCmd_To_RequiresFrom asserts that --to without --from is rejected
+// rather than silently meaning "diff working tree against <ref>".
+func TestRecordCmd_To_RequiresFrom(t *testing.T) {
+	tmpDir, _, _, shaB := setupRecordRangeFixture(t)
+	runCmd("init", "--path", tmpDir)
+	runCmd("add", "--path", tmpDir, "To without from")
+	slug := "to-without-from"
+
+	root := buildRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"record", "--path", tmpDir, slug, "--to", shaB})
+	err := root.Execute()
+	if err == nil {
+		t.Fatalf("expected error using --to without --from")
+	}
+	if !strings.Contains(err.Error(), "--to requires --from") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // TestRecordCmd_WorkingTreeFilesUnchanged verifies the original working-tree
 // --files behaviour is unregressed (no --from / --to / --commit-range).
 func TestRecordCmd_WorkingTreeFilesUnchanged(t *testing.T) {
