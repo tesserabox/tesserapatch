@@ -860,25 +860,6 @@ func TestRecordFilesScopesCapture(t *testing.T) {
 	}
 }
 
-// TestRecordFilesIncompatibleWithFrom asserts the explicit error
-// when --files and --from are combined (committed-range capture does
-// not currently accept pathspec scoping).
-func TestRecordFilesIncompatibleWithFrom(t *testing.T) {
-	tmpDir := t.TempDir()
-	gitInitTestRepo(t, tmpDir)
-	runCmd("init", "--path", tmpDir)
-	runCmd("add", "--path", tmpDir, "Files-from clash")
-	slug := "files-from-clash"
-
-	root := buildRootCmd()
-	root.SetOut(&bytes.Buffer{})
-	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"record", "--path", tmpDir, slug, "--files", "src/", "--from", "HEAD"})
-	err := root.Execute()
-	if err == nil {
-		t.Fatalf("expected error when --files combined with --from")
-	}
-	if !strings.Contains(err.Error(), "--files is incompatible with --from") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
+// TestRecordFilesIncompatibleWithFrom was removed when --files + --from was
+// made compatible. See TestRecordCmd_FromAndFiles_Compatible for the new
+// contract.

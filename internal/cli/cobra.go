@@ -796,8 +796,19 @@ func recordCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "record <slug>",
 		Short: "Capture patches (tracked + untracked files)",
-		Long:  "Capture the current diff as a patch. If --from is specified, captures the diff between that commit and HEAD instead of the working tree.",
-		Args:  cobra.ExactArgs(1),
+		Long: `Capture changes as a patch.
+
+Modes:
+  working tree (default):     tpatch record <slug> [--files <paths>]
+  committed range (--from):   tpatch record <slug> --from <base> [--to <ref>] [--files <paths>]
+  committed range (explicit): tpatch record <slug> --commit-range <a>..<b> [--files <paths>]
+
+Use the committed-range form when feature edits have already been committed
+(e.g. multiple features interleaved on the same branch). --files scopes the
+capture to specific paths in any mode. Committed-range captures never include
+untracked working-tree files — only the committed snapshots at the endpoints
+contribute to the diff.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slug := args[0]
 			s, err := openStoreFromCmd(cmd)
@@ -806,6 +817,8 @@ func recordCmd() *cobra.Command {
 			}
 
 			fromRef, _ := cmd.Flags().GetString("from")
+			toRef, _ := cmd.Flags().GetString("to")
+			commitRange, _ := cmd.Flags().GetString("commit-range")
 			filesFlag, _ := cmd.Flags().GetString("files")
 			var pathspecs []string
 			if strings.TrimSpace(filesFlag) != "" {
@@ -815,12 +828,33 @@ func recordCmd() *cobra.Command {
 					}
 				}
 			}
-			var patch string
-			if fromRef != "" {
-				if len(pathspecs) > 0 {
-					return fmt.Errorf("--files is incompatible with --from (committed-range capture does not accept pathspec scoping in this command)")
+
+			if commitRange != "" {
+				if fromRef != "" {
+					return fmt.Errorf("--commit-range is mutually exclusive with --from")
 				}
-				patch, err = gitutil.CapturePatchFromCommits(s.Root, fromRef, "HEAD")
+				if toRef != "" {
+					return fmt.Errorf("--commit-range is mutually exclusive with --to")
+				}
+				parts := strings.SplitN(commitRange, "..", 2)
+				if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+					return fmt.Errorf("--commit-range must be of the form <a>..<b> (got %q)", commitRange)
+				}
+				fromRef = strings.TrimSpace(parts[0])
+				toRef = strings.TrimSpace(parts[1])
+			}
+
+			rangeMode := fromRef != "" || toRef != ""
+			if rangeMode && fromRef == "" {
+				return fmt.Errorf("--to requires --from (or use --commit-range <a>..<b>)")
+			}
+			if rangeMode && toRef == "" {
+				toRef = "HEAD"
+			}
+
+			var patch string
+			if rangeMode {
+				patch, err = gitutil.CapturePatchFromCommitsScoped(s.Root, fromRef, toRef, pathspecs)
 			} else {
 				patch, err = gitutil.CapturePatchScoped(s.Root, pathspecs)
 			}
@@ -835,8 +869,8 @@ func recordCmd() *cobra.Command {
 				// their edits before running record"; working tree is
 				// then clean and CapturePatch (diff HEAD) returns "".
 				// Refuse the empty capture and surface --from candidates.
-				if fromRef != "" {
-					// User explicitly chose --from <ref>..HEAD and it
+				if rangeMode {
+					// User explicitly chose a committed range and it
 					// produced no diff. That is a legitimate "nothing
 					// changed in that range" — keep the old success
 					// semantic so harness scripts are not broken.
@@ -961,6 +995,8 @@ func recordCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("from", "", "Base commit to diff from (captures committed diff instead of working tree)")
+	cmd.Flags().String("to", "", "Upper bound ref for committed-range capture (defaults to HEAD; requires --from)")
+	cmd.Flags().String("commit-range", "", "Explicit committed range as <a>..<b>; mutually exclusive with --from/--to")
 	cmd.Flags().Bool("lenient", false, "Skip reverse-apply round-trip validation (use for whitespace-sensitive files)")
 	cmd.Flags().Bool("no-recipe-autogen", false, "Disable deriving apply-recipe.json from the captured patch when none exists")
 	cmd.Flags().Bool("regenerate-recipe", false, "Overwrite an existing apply-recipe.json with one derived from the captured patch")

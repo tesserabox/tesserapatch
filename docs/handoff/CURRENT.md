@@ -141,3 +141,70 @@ None.
   invariant (no stale "verified" claim) while keeping the
   producer-set rule clean (verify is the only producer of a non-nil
   record).
+
+---
+
+## Bug-fix in flight: record --files compatibility
+
+### Summary
+
+Lifted the artificial `--files` + `--from` rejection in `record` and
+extended the committed-range capture surface so the headline use case
+(interleaved commits across multiple features on the same branch,
+scoped to specific paths) works without manual `git diff` fallback.
+
+### Changes
+
+- `internal/gitutil/gitutil.go`: added
+  `CapturePatchFromCommitsScoped(repoRoot, fromRef, toRef, pathspecs)`.
+  The legacy `CapturePatchFromCommits` is now a thin wrapper that
+  delegates with `nil` pathspecs (byte-for-byte identical output for
+  existing callers — pinned by
+  `TestCapturePatchFromCommits_DefaultMatchesScoped`). Excludes come
+  before user pathspecs (mirrors `CapturePatchScoped`). Comment block
+  documents why committed-range capture intentionally never consults
+  `git ls-files --others`.
+- `internal/cli/cobra.go`: removed the `--files` + `--from` rejection;
+  added `--to <ref>` (defaults to `HEAD`, requires `--from`) and
+  `--commit-range <a>..<b>` (mutually exclusive with `--from`/`--to`,
+  parsed via `strings.SplitN(value, "..", 2)`). Help text restructured
+  to surface the three modes (working tree / `--from` / `--commit-range`).
+- Tests:
+  - `internal/gitutil/capture_from_commits_scoped_test.go` (new):
+    `_FilesScoping`, `_ToRefCaps`, `_ExcludesArtifacts`,
+    `_DefaultMatchesScoped` (backwards-compat byte-for-byte pin).
+  - `internal/cli/record_range_scoped_test.go` (new):
+    `TestRecordCmd_FromAndFiles_Compatible`,
+    `TestRecordCmd_CommitRangeAndFiles_Compatible`,
+    `TestRecordCmd_ToRefCaps`,
+    `TestRecordCmd_CommitRange_RejectsWithFrom`,
+    `TestRecordCmd_CommitRange_RejectsWithTo`,
+    `TestRecordCmd_WorkingTreeFilesUnchanged`.
+  - `internal/cli/cobra_test.go`: removed obsolete
+    `TestRecordFilesIncompatibleWithFrom` (replaced with a comment
+    pointing to the new compat test).
+
+### Validation
+
+- `gofmt -l .` → empty
+- `go build ./cmd/tpatch` → clean
+- `go test ./...` → all packages pass
+
+### Out of scope (untouched)
+
+- Skill bullets and `SPEC.md` updates — tracked separately as
+  `doc-skills-record-flags`.
+- Slice B / verify / freshness / labels code — orthogonal.
+
+### Non-obvious decisions
+
+- Chose the additive API (`CapturePatchFromCommitsScoped` + thin
+  wrapper) over a signature change to keep the byte-for-byte
+  backwards-compat guarantee trivial to prove (single test:
+  `legacy == scoped(nil)`).
+- `--to` without `--from` is rejected with a clear error rather than
+  silently defaulting `fromRef` — avoids ambiguity about whether
+  "diff working tree against `<ref>`" was intended.
+- `--commit-range` parsing rejects empty halves (e.g. `..HEAD` or
+  `abc..`) for the same reason — better an early clear error than a
+  surprising `git diff` failure later.

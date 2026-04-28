@@ -291,7 +291,26 @@ func CapturePatchScoped(repoRoot string, pathspecs []string) (string, error) {
 }
 
 // CapturePatchFromCommits captures the diff between two commits, excluding tpatch artifacts.
+// Equivalent to CapturePatchFromCommitsScoped(repoRoot, fromRef, toRef, nil) — preserved
+// as a thin wrapper so existing callers keep their byte-for-byte output.
 func CapturePatchFromCommits(repoRoot, fromRef, toRef string) (string, error) {
+	return CapturePatchFromCommitsScoped(repoRoot, fromRef, toRef, nil)
+}
+
+// CapturePatchFromCommitsScoped captures the diff between two commits and, when
+// pathspecs is non-empty, narrows the diff to those pathspecs (passed verbatim
+// to `git diff <from> <to> -- <pathspec>...`). Pathspecs may be plain paths,
+// globs, or git's `:(...)` magic forms.
+//
+// Note: committed-range capture intentionally does NOT consult `git ls-files
+// --others`. The working tree is irrelevant to a range diff — only the
+// committed snapshots at fromRef and toRef matter — so untracked files are
+// never included regardless of working-tree state.
+//
+// Exclude patterns (.tpatch/, .claude/skills/, etc.) come before user-supplied
+// pathspecs so a positive pathspec like `src/` does not re-include files under
+// the always-excluded directories (mirrors CapturePatchScoped).
+func CapturePatchFromCommitsScoped(repoRoot, fromRef, toRef string, pathspecs []string) (string, error) {
 	excludePatterns := []string{
 		":(exclude).tpatch",
 		":(exclude).claude/skills",
@@ -301,8 +320,14 @@ func CapturePatchFromCommits(repoRoot, fromRef, toRef string) (string, error) {
 		":(exclude).windsurfrules",
 	}
 	args := append([]string{"diff", fromRef, toRef, "--"}, excludePatterns...)
+	if len(pathspecs) > 0 {
+		args = append(args, pathspecs...)
+	}
 	out, err := runGit(repoRoot, args...)
 	if err != nil {
+		if len(pathspecs) > 0 {
+			return "", fmt.Errorf("git diff failed for pathspecs %v: %w", pathspecs, err)
+		}
 		return "", err
 	}
 	result := strings.TrimSpace(out)
