@@ -2,233 +2,178 @@
 
 ## Active Task
 
-- **Task ID**: M15-W3-SLICE-B
+- **Task ID**: M15-W3-SLICE-C
 - **Milestone**: M15 Wave 3 — Verify freshness overlay
-- **Description**: Slice B — freshness derivation + label integration.
-- **Status**: Review — implementation complete, tests green, awaiting
-  reviewer.
-- **Assigned**: 2026-04-27
+- **Description**: Slice C — V3–V9 real implementations including
+  hard-parent topological closure replay (V7/V8). Replaces the V3–V9
+  stubs shipped in Slice A.
+- **Status**: Not Started — staged, awaiting implementer dispatch.
+- **Assigned**: 2026-04-28
 
-## Session Summary
+## Scope (per PRD-verify-freshness.md §9 Slice C)
 
-Implemented Slice B end-to-end per PRD-verify-freshness §9 and ADR-013
-D1–D7:
+Implement the seven verify checks currently stubbed in
+`internal/workflow/verify.go`:
 
-1. Extended `ReconcileLabel` enum with the four freshness constants
-   (`LabelNeverVerified`, `LabelVerifiedFresh`, `LabelVerifiedStale`,
-   `LabelVerifyFailed`) in `internal/store/types.go`.
-2. Refactored `composeLabelsFromStatus` to compose M14.3 + freshness
-   labels, preserving F3 (retired-child short-circuit). Added pure
-   helpers `deriveFreshnessLabel`, `hashMatchesCurrent`,
-   `satisfiesStateOrBetter`, `IsFreshnessLabel`,
-   `StripFreshnessLabels`, and exported `DeriveFreshnessLabel` for
-   render-layer callers. Hookable-var
-   `readArtifactBytesForFreshness` for tests.
-3. All persistence sites (`saveReconcileArtifacts`, phase-3.5
-   short-circuit in `reconcile.go`, `accept.go`) now call
-   `StripFreshnessLabels` before writing `Reconcile.Labels` →
-   freshness never persists (D4 byte-identity).
-4. Status rendering: `tpatch status` text mode now suffixes
-   `(label, label)` after the title; `tpatch status --json` emits a
-   per-feature `freshness_label` and `labels_rendered` field;
-   `tpatch status --dag` (text + JSON) merges the freshness label into
-   the rendered label set; the JSON shape gains `freshness_label` and
-   `verify` per node.
-5. `tpatch amend`: detects recipe-touching by EITHER (a) comparing
-   `apply-recipe.json` bytes pre/post the amend invocation OR (b)
-   comparing the on-disk recipe sha256 against the persisted
-   `Verify.RecipeHashAtVerify` (catches external edits between
-   `tpatch verify` and `tpatch amend`). When either trigger fires,
-   `clearVerifyForAmend` sets `Verify = nil`. Producer-set rule per
-   ADR-013 D3: amend asserts authorship; if the recipe drifted from
-   what Verify recorded, Verify is no longer authoritative. The OR
-   logic was added in revision-1 (`53a4d9a`) after the external
-   supervisor reproduced live Case C against the original pre/post-only
-   path. `--state` flag added, wired solely to reject any value
-   (notably `tested`) with `*ExitCodeError{Code:2}` per PRD §9.
+- **V3** `recipe_op_targets_resolve` — block. For each op in
+  `apply-recipe.json`, the op's `Path` must exist OR carry a
+  `created_by` whose parent is a declared **hard** dep currently in
+  `applied`/`upstream_merged`. Reuse M14.2 `created_by` semantics
+  (`internal/workflow/created_by_gate.go:57`).
+- **V4** `dep_metadata_valid` — block. Call
+  `store.ValidateDependencies(s, slug, status.DependsOn)`
+  (`internal/store/validation.go:66`). Wraps the validation sentinel
+  verbatim in the remediation field.
+- **V5** `satisfied_by_reachable` — block. For every dep with
+  `satisfied_by` set, validate the SHA matches
+  `store.satisfiedBySHARe.MatchString` AND
+  `gitutil.IsAncestor(repoRoot, dep.SatisfiedBy, "HEAD")` returns
+  true (`internal/gitutil/gitutil.go:680`).
+- **V6** `dependency_gate_satisfied` — **warn** (gated on
+  `Config.DAGEnabled()`). Call
+  `workflow.CheckDependencyGate(s, slug)`
+  (`internal/workflow/dependency_gate.go:42`). Severity reduced from
+  block to warn so V5 does the precise work and V6 echoes context;
+  also accommodates the two scenarios documented in PRD §3.4.4.
+- **V7** `recipe_replay_clean` — block. **Hard-parent topological
+  closure replay** per PRD §3.4.3:
+  1. Compute hard-parent closure via `store.DependsOn` walking only
+     `DependencyKindHard` edges, transitively, until fixed point.
+  2. Order the closure with `store.TopologicalOrder`
+     (`internal/store/dag.go:107`) over the hard-only sub-DAG.
+  3. For each parent in topo order, replay its
+     `apply-recipe.json` into a `gitutil.CreateShadow` worktree.
+     Skip parents in `upstream_merged` (their changes are already
+     in the baseline). `applied` parents replay. Any other state is
+     a fail-fast condition: abort with
+     `failed_at: "parent-replay"` and `parent_slug: <slug>` in the
+     report.
+  4. After all replayable parents have replayed, apply the
+     **target's** recipe in the same shadow.
+- **V8** `post_apply_patch_replay_clean` — block. Reuses V7's shadow.
+  After V7 succeeds, `git apply --check` of `post-apply.patch`
+  against the closure-replayed shadow.
+- **V9** `reconcile_outcome_consistent` — warn. Reads
+  `status.Reconcile.Outcome` only. Adversarial test must pin that
+  V9 never reads any artifact (D6 invariant).
+
+V7+V8 share a **single shadow allocation** per verify run. The
+closure replays once, target recipe applies once, target patch
+`--check` once, then `PruneShadow` regardless of pass/fail.
+
+## Constraints (binding from ADR-013 + PRD §3)
+
+- **D6** — verify never reads `reconcile-session.json` or any
+  `artifacts/` file beyond the recipe and the post-apply patch. V9
+  reads `status.Reconcile.Outcome` from `status.json` only.
+- **D7** — verify is read-only on the working tree. The shadow used
+  by V7/V8 is pruned before verify exits.
+- Static checks (V0–V6, V9) run before the dynamic V7/V8 phase, so a
+  recipe-shape error doesn't waste a shadow allocation.
+- The closure-replay primitive lives **only** in
+  `internal/workflow/verify.go`. Don't factor it out — ADR-010 D2
+  reserves shadows for the M12 resolver scope; if a future feature
+  needs the same primitive, it gets an ADR amendment.
+- V0–V2 contract is locked from Slice A — must not regress.
+- Slice B freshness derivation reads from `Verify` only; Slice C
+  changes what populates `Verify`, not how labels derive from it.
+
+## Skill assets
+
+Slice C is the V3–V9 implementation phase. Skill bullets and parity
+guard updates are **Slice D scope**, not Slice C. Don't touch
+`assets/` in this slice.
+
+## Tests required (per PRD §9 Slice C)
+
+- Per-check unit tests for V3, V4, V5, V6, V9 (V7/V8 covered by
+  closure-replay fixtures).
+- Closure-replay test fixtures:
+  - 3-deep DAG happy path.
+  - Parent-fail mid-closure → `failed_at: "parent-replay"`.
+  - `upstream_merged` parent in middle of closure → skipped without
+    error.
+- Concurrency-with-reconcile refusal test (lock contention path).
+- Source-truth adversarial test pinning V9 reads no artifact files.
+
+## Validation gate (must pass before review dispatch)
+
+```bash
+gofmt -l .                       # empty
+go test ./...                    # all packages green
+go build ./cmd/tpatch            # clean
+```
 
 ## Files Changed
 
-### Source
-
-- `internal/store/types.go` — 4 new ReconcileLabel constants.
-- `internal/workflow/labels.go` — full freshness derivation;
-  IsFreshnessLabel / StripFreshnessLabels / DeriveFreshnessLabel
-  exported; composeM143Labels extracted; F3 retired-child preserved.
-- `internal/workflow/reconcile.go` — both persistence sites strip
-  freshness.
-- `internal/workflow/accept.go` — strips freshness before writing
-  Reconcile.Labels.
-- `internal/cli/status_dag.go` — `dagJSONNode` extended with
-  `FreshnessLabel` + `Verify`; `walkTree` / `renderNodeLine` plumbed
-  with `*store.Store`; `mergedLabels` helper added.
-- `internal/cli/cobra.go` — `statusCmd` text + JSON modes render the
-  freshness label and the merged label set.
-- `internal/cli/c1.go` — `amendCmd` reads recipe pre/post bytes,
-  clears `Verify` on diff, rejects `--state` values with exit 2.
-
-### Tests (new)
-
-- `internal/workflow/labels_freshness_truthtable_test.go` — full
-  truth-table matrix + state-or-better invariants + empty-hash match.
-- `internal/workflow/dependency_gate_freshness_test.go` — D2
-  invariant (apply gate ignores parent freshness).
-- `internal/workflow/slice_b_byte_identity_test.go` — v0.6.1
-  byte-identity guard + persistence-strip guard.
-- `internal/cli/amend_freshness_test.go` — recipe-touching
-  invalidation, deps-only preservation, `--state tested` exit-2,
-  `--state <any>` exit-2.
-
-### Tests (updated)
-
-- `internal/workflow/labels_test.go`,
-  `internal/workflow/labels_upstreamed_test.go` — updated to expect
-  freshness label merged into the derived set (8+1 cases).
-- `internal/cli/status_dag_test.go` — assertion on merged label
-  suffix `(blocked-by-parent, never-verified)`.
+(none yet — task not started)
 
 ## Test Results
 
-```
-$ gofmt -l .
-(empty)
-$ go test ./...
-ok  github.com/tesseracode/tesserapatch/assets
-ok  github.com/tesseracode/tesserapatch/internal/cli
-ok  github.com/tesseracode/tesserapatch/internal/gitutil
-ok  github.com/tesseracode/tesserapatch/internal/provider
-ok  github.com/tesseracode/tesserapatch/internal/safety
-ok  github.com/tesseracode/tesserapatch/internal/store
-ok  github.com/tesseracode/tesserapatch/internal/workflow
-$ go build ./cmd/tpatch
-(clean)
-```
-
-## Current State
-
-- All ADR-013 D1–D7 invariants honoured:
-  - D1 (no apply-gate behavior change) — `dependency_gate.go`
-    untouched; `dependency_gate_freshness_test.go` pins the contract.
-  - D2 (apply gate ignores Verify) — same.
-  - D3 (recipe-touching amend invalidates) — OR-condition in
-    `c1.go:235`: pre/post recipe bytes differ within the amend
-    invocation, OR the on-disk recipe sha256 differs from the
-    persisted `Verify.RecipeHashAtVerify` (`recipeDiffersFromVerify`,
-    `c1.go:295`). Either trigger calls `clearVerifyForAmend`.
-  - D4 (no persistence of freshness labels) —
-    `slice_b_byte_identity_test.go` enforces.
-  - D5 (purity at read time) — `deriveFreshnessLabel` is read-only.
-  - D6 (no reconcile-session.json reads) — confirmed.
-  - D7 (deterministic) — single-label-per-feature contract pinned by
-    truth-table tests.
+(none yet)
 
 ## Next Steps
 
-1. Reviewer runs the standard checklist (build/test/format) and the
-   ADR-013 D1–D7 invariants against the diff.
-2. Confirm `assets_test.go` parity guard remains passing (no
-   skill-asset changes in this slice — should be untouched).
-3. On APPROVED: archive this entry to HISTORY.md, flip Slice B in
-   `docs/milestones/M15.md` and PRD §9 Slice B row.
+1. Dispatch the Slice C implementer sub-agent (general-purpose,
+   background) with this handoff as its scope.
+2. Await internal sub-agent reviewer cycle (mandatory live closure
+   replay reproduction — sub-agent reviewers have missed live
+   reproductions on three previous Slice cycles, so the reviewer
+   prompt must require the 3-deep DAG fixture run).
+3. On internal APPROVED, send external supervisor prompt with the
+   full Slice C diff plus the live shadow-replay reproduction.
+4. On external APPROVED, archive Slice C to HISTORY.md and stage
+   Slice D (`--all`, skill bullets, parity guard, CHANGELOG v0.6.2).
 
 ## Blockers
 
-None.
+None. Slice B is shipped to origin/main on `1032cda`. ROADMAP shows
+Slice B ✅. Working tree clean except untracked exploratory PRDs
+(`docs/whitepapers/`, `docs/prds/PRD-feature-slices-and-nested-changes.md`,
+`docs/prds/PRD-intent-version-control-evaluation.md`,
+`docs/prds/PRD-tpatch-git-primitive-mapping.md`) which other agents
+are working on — keep these untracked, do NOT include in Slice C
+commits.
 
 ## Context for Next Agent
 
-- `composeLabelsFromStatus` is the single source of truth for
-  read-time labels. All freshness derivation flows through it.
-- For features where the M14.3 path returns nil (retired children via
-  `ReconcileUpstreamed`), freshness is also suppressed — this is
-  intentional and locked by `TestComposeLabels_UpstreamedChild_NoLabels`.
-- The amend `--state` flag currently accepts NO values; widening to
-  permit specific lifecycle transitions is a future task. The flag
-  exists today purely to surface a clean exit-2 error.
-- The `clearVerifyForAmend` helper sets `Verify = nil` (truthful
-  `never-verified` derivation), not `Passed = false`. ADR-013 D3
-  describes the latter; the chosen implementation honours the same
-  invariant (no stale "verified" claim) while keeping the
-  producer-set rule clean (verify is the only producer of a non-nil
-  record).
+- The V0–V2 logic in `internal/workflow/verify.go` is the structural
+  template. Each V3+ check follows the same pattern: probe
+  pre-condition, run the actual check, populate the `CheckResult`
+  with `Status` (`pass`/`fail`/`skip`), `Severity` (`block`/`warn`),
+  and a remediation string per PRD §3.4.5.
+- Remediation strings are spec'd in PRD §3.4.5 — copy verbatim, do
+  not paraphrase. Harnesses scrape these.
+- The closure-replay primitive is the architectural core of Slice C.
+  Get it right once in `verify.go`; resist any urge to share it with
+  the resolver / reconcile paths (ADR-010 D2 boundary).
+- `gitutil.CreateShadow` allocates a worktree under `.tpatch/shadows/`
+  scoped per-slug. `PruneShadow` cleans up. Both already exist from
+  M12.
+- `store.TopologicalOrder` exists from M14 — pass it the hard-only
+  sub-DAG (filter `DependencyKindHard` edges).
+- Slice B's `RecipeHashAtVerify` field on the `Verify` sub-record is
+  populated by Slice C's verify writer. Don't change the
+  `Verify.RecipeHashAtVerify` write semantics — Slice B's amend
+  invalidation depends on its byte-identity guarantee.
+- The V0–V2 freshness contract from Slice A says `Verify` is only
+  populated when verify completes (pass or fail), not on
+  parent-replay abort. PRD §3.4.3 is explicit:
+  > The freshness record is written with `passed=false` and the V7
+  > entry's `remediation` carries the failing parent slug + wrapped
+  > error.
+  So parent-replay failures DO write `Verify` with passed=false.
+  Pre-V0 aborts (e.g. lock contention) do NOT.
 
----
+## Out of scope (DO NOT touch)
 
-## Bug-fix in flight: record --files compatibility
-
-### Summary
-
-Lifted the artificial `--files` + `--from` rejection in `record` and
-extended the committed-range capture surface so the headline use case
-(interleaved commits across multiple features on the same branch,
-scoped to specific paths) works without manual `git diff` fallback.
-
-### Changes
-
-- `internal/gitutil/gitutil.go`: added
-  `CapturePatchFromCommitsScoped(repoRoot, fromRef, toRef, pathspecs)`.
-  The legacy `CapturePatchFromCommits` is now a thin wrapper that
-  delegates with `nil` pathspecs (byte-for-byte identical output for
-  existing callers — pinned by
-  `TestCapturePatchFromCommits_DefaultMatchesScoped`). Excludes come
-  before user pathspecs (mirrors `CapturePatchScoped`). Comment block
-  documents why committed-range capture intentionally never consults
-  `git ls-files --others`.
-- `internal/cli/cobra.go`: removed the `--files` + `--from` rejection;
-  added `--to <ref>` (defaults to `HEAD`, requires `--from`) and
-  `--commit-range <a>..<b>` (mutually exclusive with `--from`/`--to`,
-  parsed via `strings.SplitN(value, "..", 2)`). Help text restructured
-  in `9096d04` to lead with the committed-range modes (`--from` and
-  `--commit-range`) per the headline-first requirement; working-tree
-  default falls below.
-- Tests:
-  - `internal/gitutil/capture_from_commits_scoped_test.go` (new):
-    `_FilesScoping`, `_ToRefCaps`, `_ExcludesArtifacts`,
-    `_DefaultMatchesScoped` (backwards-compat byte-for-byte pin).
-  - `internal/cli/record_range_scoped_test.go` (new):
-    `TestRecordCmd_FromAndFiles_Compatible`,
-    `TestRecordCmd_CommitRangeAndFiles_Compatible`,
-    `TestRecordCmd_ToRefCaps`,
-    `TestRecordCmd_CommitRange_RejectsWithFrom`,
-    `TestRecordCmd_CommitRange_RejectsWithTo`,
-    `TestRecordCmd_To_RequiresFrom` (added in `9096d04` to cover the
-    explicit "--to without --from" rejection),
-    `TestRecordCmd_WorkingTreeFilesUnchanged`.
-  - `internal/cli/cobra_test.go`: removed obsolete
-    `TestRecordFilesIncompatibleWithFrom` (replaced with a comment
-    pointing to the new compat test).
-
-### External supervisor verdict
-
-The orthogonal record bug-fix stack (`9e96b38` + `9096d04`) was
-reviewed by the external supervisor as a separate pass and APPROVED.
-Live CLI repro confirmed: `record --from <base> --files <path>`
-produced a patch containing only the scoped path; `--to` without
-`--from` rejected with the intended error. Stack is orthogonal to
-verify/freshness/amend/status — no code-level interference. The only
-finding was handoff drift, addressed in this commit.
-
-### Validation
-
-- `gofmt -l .` → empty
-- `go build ./cmd/tpatch` → clean
-- `go test ./...` → all packages pass
-
-### Out of scope (untouched)
-
-- Skill bullets and `SPEC.md` updates — tracked separately as
-  `doc-skills-record-flags`.
-- Slice B / verify / freshness / labels code — orthogonal.
-
-### Non-obvious decisions
-
-- Chose the additive API (`CapturePatchFromCommitsScoped` + thin
-  wrapper) over a signature change to keep the byte-for-byte
-  backwards-compat guarantee trivial to prove (single test:
-  `legacy == scoped(nil)`).
-- `--to` without `--from` is rejected with a clear error rather than
-  silently defaulting `fromRef` — avoids ambiguity about whether
-  "diff working tree against `<ref>`" was intended.
-- `--commit-range` parsing rejects empty halves (e.g. `..HEAD` or
-  `abc..`) for the same reason — better an early clear error than a
-  surprising `git diff` failure later.
+- Skill assets (`assets/`) — Slice D.
+- `tpatch verify --all` aggregate runner — Slice D.
+- `assets_test.go` parity-guard anchor extension — Slice D.
+- `CHANGELOG.md` v0.6.2 entry — Slice D.
+- `docs/whitepapers/` and untracked exploratory PRDs.
+- Any code path outside `internal/workflow/verify.go` (V3–V9 are
+  pure additions to the existing verify.go).
+- Existing apply-gate semantics — `dependency_gate.go` stays
+  block-severity for the live apply path; V6 only reduces severity
+  for the verify read path.

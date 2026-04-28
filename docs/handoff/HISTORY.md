@@ -1,3 +1,19 @@
+# 2026-04-28 — M15-W3-SLICE-B — APPROVED, shipped to origin/main
+
+**Outcome**: Slice B (freshness derivation + label integration + amend invalidation) landed across two commits. The original (`a07acc7`) was approved by the sub-agent reviewer but flagged HIGH by the external supervisor: the recipe-touching amend invalidation contract (ADR-013 D3) was effectively dead at the CLI level because the pre/post bytes compare in `c1.go` could never trigger (no amend code path rewrites `apply-recipe.json`).
+
+Revision-1 (`53a4d9a`) added an OR-condition to amend's invalidation logic: clear `Verify` if EITHER pre/post bytes differ within the amend invocation OR the on-disk recipe sha256 differs from the persisted `Verify.RecipeHashAtVerify` (`recipeDiffersFromVerify` helper at `c1.go:295`). Replaced the helper-only test with a real CLI-level regression that runs `amendCmd` via the cobra root (the supervisor's exact Case C reproduction). Live Case C now passes: BEFORE the fix the amend command exited 0 but Verify was preserved against a drifted recipe; AFTER the fix Verify is cleared as ADR-013 D3 mandates.
+
+External supervisor's second pass on revision-1: APPROVED.
+
+In parallel, an orthogonal record bug-fix stack landed at `9e96b38` + `9096d04`: lifted the artificial `--files` + `--from` rejection, added `--to <ref>` and `--commit-range <a>..<b>` flags, added `CapturePatchFromCommitsScoped` (with thin-wrapper byte-identity guarantee for `CapturePatchFromCommits`), and reordered help text to lead with the committed-range modes. External supervisor's pass: APPROVED.
+
+Final push to origin/main on `1032cda`: `a07acc7` + `9e96b38` + `9096d04` + `53a4d9a` + a docs-only handoff alignment commit.
+
+Slice B is now ✅ in `docs/ROADMAP.md`. Slice C (V3–V9 real implementations + closure replay) is the next active task.
+
+---
+
 # 2026-04-27 — M15-W3-REDESIGN — design package APPROVED WITH NOTES, archived for Slice A dispatch
 
 **Outcome**: The freshness-overlay redesign package (PRD-verify-freshness.md + ADR-013) shipped at commit `37a483d` and was reviewed at commit `3c122aa`. Reviewer verdict: **APPROVED WITH NOTES**. Three advisory notes (CheckResults persistence bloat, Note 2 absent-recipe clarity, Note 3 parity-guard handling) are recorded in the top entry of `docs/supervisor/LOG.md` and now bind the Slice A implementer.
