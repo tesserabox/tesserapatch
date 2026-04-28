@@ -1,3 +1,237 @@
+## External Supervisor Re-review #2 — M15-W3-SLICE-B-REVISION-1 — 2026-04-28
+
+**Reviewer**: external supervisor (user-driven)
+**Task**: Slice B revision-1 — fix amend invalidation dead-branch
+**Commits reviewed**: `a07acc7` (orig) + `53a4d9a` (revision-1)
+
+### Verdict: APPROVED
+
+The previous external pass on Slice B (commit `a07acc7`) returned NEEDS
+REVISION with one HIGH finding: the recipe-touching amend invalidation
+contract was effectively dead at the CLI level because the pre/post
+bytes compare in `c1.go` could never trigger (no amend code path
+rewrites `apply-recipe.json`). Live Case C reproduced: seed Verify
+with recipe v1 hash, overwrite recipe with v2, run amend → command
+exited 0 but Verify remained.
+
+Revision-1 (`53a4d9a`) added an OR-condition: clear Verify if EITHER
+pre/post bytes differ (future-proof) OR the on-disk recipe sha256
+differs from the persisted `Verify.RecipeHashAtVerify` (catches
+external mutations between `tpatch verify` and `tpatch amend`).
+Implements producer-set rule per ADR-013 D3 correctly: amend asserts
+authorship; if recipe drifted from what Verify recorded, Verify is
+no longer authoritative.
+
+The previous helper-only test was replaced with a real CLI-level
+regression that runs amendCmd via the cobra root (the supervisor's
+exact Case C reproduction). `TestAmend_RecipeIdentity_PreservesVerify`
+added to pin the negative path. `TestAmend_DepsOnly_PreservesVerify`
+updated to seed a matching recipe hash.
+
+### Action Taken
+
+External supervisor verdict on Slice B: APPROVED. Live Case C
+re-confirmed. No further code changes to Slice B.
+
+---
+
+## External Supervisor Review — RECORD-FILES-FROM — 2026-04-28
+
+**Reviewer**: external supervisor (user-driven)
+**Task**: Lift `--files` + `--from` rejection; add `--to` and `--commit-range`
+**Commits reviewed**: `9e96b38` + `9096d04`
+
+### Verdict: APPROVED WITH NOTES (handoff drift only — addressed in this commit)
+
+Live CLI repro passed: `record --from <base> --files <path>` produced
+a patch containing only the scoped path; `--to` without `--from`
+rejected with the intended error. Focused record tests passed 11/11;
+full suite green at 430 passing tests. Stack stays confined to record
+CLI wiring and committed-range git capture helpers — no interference
+with Slice B / verify / freshness / amend / status.
+
+The only finding was handoff drift: CURRENT.md still described the
+pre-revision Slice B amend wording and didn't reflect the `9096d04`
+follow-up (committed-range-first help text + `_To_RequiresFrom`
+test). Both addressed in this docs-only commit.
+
+### Action Taken
+
+External supervisor verdict on bug-fix stack: APPROVED. Combined push
+of full reviewed stack (`a07acc7` + `9e96b38` + `9096d04` + `53a4d9a`)
+plus this docs-only follow-up.
+
+---
+
+**Reviewer**: m15-w3-slice-b-reviewer-2 (sub-agent)
+**Task**: Fix amend invalidation dead-branch; CLI-level regression
+**Commit reviewed**: 53a4d9a
+
+### Checklist
+
+- [x] `go build ./cmd/tpatch` clean — builds without errors
+- [x] `go test ./...` all green — all tests pass (including new TestAmend_RecipeTouching_ClearsVerify, TestAmend_RecipeIdentity_PreservesVerify, and updated TestAmend_DepsOnly_PreservesVerify)
+- [x] `gofmt -l .` empty — no formatting issues
+- [x] **Live Case C reproduces correctly with fresh binary** — CRITICAL: ran manual reproduction script; BEFORE=1 occurrence of "verify", AFTER=0 occurrences (Verify correctly cleared)
+- [x] `TestAmend_RecipeTouching_ClearsVerify` invokes amendCmd via runCmd/root.Execute — YES: lines 79-81 call `runCmd("amend", "--path", tmp, "demo", "new desc")`, not the helper directly
+- [x] `TestAmend_RecipeIdentity_PreservesVerify` exists and passes — YES: lines 95-141 test matching hash preserves Verify
+- [x] `TestAmend_DepsOnly_PreservesVerify` updated to seed matching hash; passes — YES: lines 169-185 now seed recipe with matching hash so the test exercises the true preservation path instead of accidentally triggering the clear
+- [x] `clearVerifyForAmend` still sets `Verify = nil` (producer-set rule) — YES: line 335 sets `status.Verify = nil`
+- [x] `recipeDiffersFromVerify` correctly returns false when `Verify == nil` — YES: line 297-298 returns false when `status.Verify == nil`
+- [x] `recipeDiffersFromVerify` correctly handles both-absent edge case — YES: when `len(recipeBytes) == 0`, `currentHash = ""` (line 300-304); if verify also stored `""` (from `sha256Hex` returning `""` for empty bytes), then `"" != ""` is false (no invalidation, correct semantic)
+- [x] Pre/post bytes compare in amend STILL exists (future-proof) — YES: lines 169 and 234 capture recipeBefore/recipeAfter; line 235 checks `!bytes.Equal(recipeBefore, recipeAfter)`
+- [x] OR-condition: pre/post differ OR persisted-hash-differs triggers clear — YES: line 235 has `if !bytes.Equal(recipeBefore, recipeAfter) || recipeDiffersFromVerify(s, slug, recipeAfter)` (correct OR logic)
+- [x] No D2 regression: `internal/workflow/dependency_gate.go` untouched — CONFIRMED: `git diff 53a4d9a^..53a4d9a -- internal/workflow/dependency_gate.go` returns empty
+- [x] No D5 regression: `composeLabelsFromStatus` and helpers untouched — CONFIRMED: `git diff 53a4d9a^..53a4d9a internal/workflow/labels.go` returns empty
+- [x] No D6 regression: no new artifact reads beyond `apply-recipe.json` for hash compare — CONFIRMED: only `readRecipeBytes` reads recipe artifact; no new reads of other artifacts
+- [x] Scope: only `c1.go` + `amend_freshness_test.go` in `53a4d9a` — CONFIRMED: `git diff --name-only 53a4d9a^..53a4d9a` shows exactly 2 files
+- [x] Co-author trailer present — YES: commit message includes `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`
+
+### Verdict: APPROVED
+
+All hard rules satisfied. The revision correctly implements the recipe-touching invalidation contract at the CLI level:
+
+1. **Live Case C passes**: Manual reproduction with fresh binary confirms that when apply-recipe.json is externally modified between verify and amend, the amend command clears the Verify record (BEFORE=1, AFTER=0).
+
+2. **Test coverage is now CLI-level**: `TestAmend_RecipeTouching_ClearsVerify` runs the full `tpatch amend` command via cobra root (lines 79-81), not just the helper. This catches the dead-branch issue the external supervisor identified.
+
+3. **Dual-trigger logic is sound**: The implementation correctly OR's two conditions (line 235 in c1.go):
+   - (a) In-flight mutation: `!bytes.Equal(recipeBefore, recipeAfter)` — future-proofs for amend flags that might rewrite the recipe
+   - (b) Persisted-drift detection: `recipeDiffersFromVerify(s, slug, recipeAfter)` — catches external edits between verify and amend (the supervisor's Case C)
+
+4. **Edge cases handled correctly**:
+   - No Verify record: `recipeDiffersFromVerify` returns false (nothing to invalidate)
+   - Both recipe and RecipeHashAtVerify absent: `"" != ""` is false (mirrors verify writer's both-absent-is-match semantic)
+   - Recipe identity: matching hash preserves Verify (TestAmend_RecipeIdentity_PreservesVerify)
+
+5. **No regressions**: Deps-only amend test updated to seed matching hash (lines 169-185); dependency_gate.go, labels.go, and verify.go untouched.
+
+6. **Scope discipline**: Only the two expected files modified; no Slice C work, no out-of-scope changes.
+
+The fix resolves the supervisor's NEEDS REVISION finding without introducing new issues. Ready to send back to external supervisor.
+
+---
+
+## Review — BUG-RECORD-FILES-FROM — 2026-04-28
+
+**Reviewer**: bug-record-files-from-reviewer (sub-agent)
+**Task**: Lift --files + --from incompatibility; add --to and --commit-range
+**Commit reviewed**: 9e96b38
+
+### Checklist
+
+- [x] `go build ./cmd/tpatch` clean — builds without errors
+- [x] `go test ./...` all green — all tests pass
+- [x] `gofmt -l .` empty — no formatting issues
+- [x] All 6 scope items implemented — yes, all delivered
+- [x] Backwards-compat byte-identity test (`_DefaultMatchesScoped`) exercises `CapturePatchFromCommits(...)` vs `CapturePatchFromCommitsScoped(..., nil)` — verified at lines 192-202 of capture_from_commits_scoped_test.go; would FAIL if they diverged
+- [x] `_FilesScoping` test narrows to pathspec-only — verified at lines 88-100; checks `b.txt` included, `a.txt` and `c.txt` excluded
+- [x] `_ToRefCaps` test caps upper bound — verified at lines 127-136; checks `a.txt` included (commit A), `b.txt` and `vB` content excluded (commit B)
+- [x] `_ExcludesArtifacts` test strips .tpatch/ — verified at lines 169-178; checks `real.txt` included, `.tpatch/noise.txt` excluded
+- [x] CLI integration `--from <base> --files <path>` — TestRecordCmd_FromAndFiles_Compatible at lines 93-121 checks patch contains `src/b.txt` only
+- [x] CLI integration `--commit-range <a>..<b> --files <path>` — TestRecordCmd_CommitRangeAndFiles_Compatible at lines 125-150
+- [x] Mutex: `--commit-range` + `--from` rejected — TestRecordCmd_CommitRange_RejectsWithFrom at lines 186-204; clear error message
+- [x] Mutex: `--commit-range` + `--to` rejected — TestRecordCmd_CommitRange_RejectsWithTo at lines 207-225
+- [x] Mutex: `--to` without `--from` rejected — verified manually; error: "--to requires --from (or use --commit-range <a>..<b>)" at cobra.go:849; no explicit test but behavior confirmed
+- [x] Working-tree `--files` no regression — TestRecordCmd_WorkingTreeFilesUnchanged at lines 229-258
+- [ ] Help text shows committed-range scoped form first — VIOLATION: working tree listed first (line 802), committed-range forms second (lines 803-804)
+- [x] Untracked files NOT included in committed-range — verified manually; CapturePatchFromCommitsScoped does NOT call `git ls-files --others` (gitutil.go:313-337)
+- [x] `--commit-range` parser edge cases rejected — manually verified: `abc` (no ..), `..HEAD`, `abc..`, empty string (passes through), `  ..  ` all rejected with clear message (cobra.go:840-841)
+- [x] No verify/freshness/labels/Slice B code touched — confirmed; only cobra.go, cobra_test.go, gitutil.go, new test files, and handoff doc
+- [x] No untracked files committed — confirmed; only source and test files
+- [x] Co-author trailer on commit — confirmed: `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`
+
+### Verdict: APPROVED WITH NOTES
+
+All hard rules satisfied. All 6 scope items delivered. Tests are comprehensive and cover the critical cases. Build clean, tests green, no regressions.
+
+**One non-blocking finding**:
+- **Help text ordering** (cobra.go:802-804): The requirement stated "surface committed-range scoped form first as the headline." Current help text lists "working tree (default)" first, then the two committed-range forms. While the committed-range forms are prominently documented, they should be listed before the working tree form per the literal requirement. This is not a hard rule violation (not in the "Hard rules" section), but it was in the review checklist.
+
+**Minor test coverage gap** (non-blocking):
+- No explicit test for `--to` without `--from` rejection, though the behavior is correct and was verified manually. The tests cover `--commit-range` mutex cases but not the `--to` requires `--from` case. Consider adding `TestRecordCmd_ToWithoutFrom_Rejected` for completeness.
+
+**Key verifications passed**:
+- **Backwards compatibility**: `TestCapturePatchFromCommits_DefaultMatchesScoped` proves `CapturePatchFromCommits` delegates to `CapturePatchFromCommitsScoped(..., nil)` with byte-identical output. Would fail if implementation diverged.
+- **Pathspec ordering**: Excludes come before user pathspecs in both `CapturePatchScoped` (gitutil.go:256-259) and `CapturePatchFromCommitsScoped` (gitutil.go:322-325), preventing re-inclusion of `.tpatch/` via positive pathspecs.
+- **Untracked exclusion**: Committed-range capture intentionally does NOT consult `git ls-files --others` (comment at gitutil.go:305-308 documents this). Verified manually that untracked files are excluded.
+- **Mutex enforcement**: All three mutex cases enforced with clear error messages:
+  - `--commit-range` + `--from` (cobra.go:834)
+  - `--commit-range` + `--to` (cobra.go:837)
+  - `--to` without `--from` (cobra.go:849)
+- **Edge case handling**: `--commit-range` parser validates both halves are non-empty after trimming (cobra.go:840), rejecting `..HEAD`, `abc..`, whitespace-only, and single-ref forms.
+- **No scope creep**: Commit touches only record command, gitutil capture functions, tests, and handoff doc. No verify/freshness/labels code touched.
+
+### Notes
+
+**Suggested follow-up** (not blocking approval):
+1. Reorder help text to list committed-range forms before working tree to match the "headline use case" framing in the requirements.
+2. Add explicit test for `--to` without `--from` rejection to close the minor test coverage gap.
+
+---
+
+## Review — M15-W3-SLICE-B — 2026-04-28
+
+**Reviewer**: m15-w3-slice-b-reviewer (sub-agent)
+**Task**: Slice B — verify freshness label derivation + amend invalidation
+**Commit reviewed**: a07acc7
+
+### Checklist
+
+- [x] `go build ./cmd/tpatch` — clean
+- [x] `go test ./...` — all green (10.715s)
+- [x] `gofmt -l .` — empty
+- [x] All 7 scope items implemented
+- [x] D2 invariant pinned by actual passing test (`TestDependencyGate_IgnoresParentVerifyStaleness`) — `dependency_gate.go` untouched
+- [x] D5 invariant: `composeLabelsFromStatus` is PURE (no writes, only reads `Verify`, parent status, recipe/patch bytes)
+- [x] D6 invariant: freshness derivation does NOT read `reconcile-session.json` (only reads `apply-recipe.json` and `post-apply.patch` via `readArtifactBytesForFreshness`)
+- [x] D4 byte-identity: `TestSliceB_ByteIdentity_NoVerifyField` loads default feature (no Verify), round-trips, asserts byte-identical; `TestSliceB_PersistedLabels_NeverContainFreshness` verifies strip logic at all persistence sites
+- [x] State-or-better invariant: full matrix covered in `labels_freshness_truthtable_test.go` (lines 175–221)
+- [x] Mutual exclusivity: `deriveFreshnessLabel` returns exactly one label per feature (logic enforces this; truth-table tests verify each path)
+- [x] Truth-table test covers: nil Verify ✓, failed Verify ✓, passed+recipe-match ✓, passed+recipe-MISMATCH ✓, passed+patch-match ✓, passed+patch-MISMATCH ✓, passed+parent-snapshot-empty ✓, passed+parent-state-or-better-OK ✓, passed+parent-state-or-better-VIOLATED ✓, passed+parent-missing ✓
+- [x] Recipe-touching amend test: `TestAmend_RecipeTouching_ClearsVerify` — sets `Verify.Passed=true`, calls `clearVerifyForAmend`, asserts `Verify==nil` (not just `Passed=false`)
+- [x] Recipe-untouching amend test: `TestAmend_DepsOnly_PreservesVerify` — sets `Verify.Passed=true`, runs deps-only amend, asserts `Verify!=nil` and `Passed==true`
+- [x] `--state tested` rejection test: `TestAmend_StateTested_ExitsTwo` — asserts `ExitCodeError{Code:2}`
+- [x] `tpatch status` text renders freshness label inline via `mergedLabels` helper (cobra.go:299)
+- [x] `tpatch status --dag` renders freshness label inline via `renderNodeLine` (status_dag.go:328)
+- [x] `tpatch status --json` emits `freshness_label` and `Verify` per feature (cobra.go:264)
+- [x] No regressions: existing M14.3 labels compose correctly alongside freshness (all 9 existing tests updated to expect `+LabelNeverVerified` in assertions)
+- [x] No untracked files committed (whitepapers, exploratory PRDs, tpatch binary, test_output.txt all untracked and not in commit)
+- [x] Co-author trailer on commit: `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` ✓
+
+### Verdict: APPROVED
+
+All hard rules satisfied. All 7 scope items delivered. Tests are comprehensive and actually exercise the invariants they claim to pin.
+
+**Key invariants verified**:
+- **D2 (apply gate)**: `dependency_gate.go` unchanged; test `TestDependencyGate_IgnoresParentVerifyStaleness` creates parent with `Verify.Passed=true` but stale hashes, confirms gate passes, confirms `DeriveFreshnessLabel` returns `verified-stale` (lines 40–42) — proving the gate ignores freshness while freshness derivation works correctly.
+- **D5 (purity)**: `composeLabelsFromStatus` and all helpers (`deriveFreshnessLabel`, `hashMatchesCurrent`, `satisfiesStateOrBetter`) contain zero write operations. Only reads: `child.Verify`, `s.LoadFeatureStatus` for parents, `readArtifactBytesForFreshness` for hash comparison.
+- **D6 (no session artifact reads)**: freshness derivation only touches `apply-recipe.json` and `post-apply.patch` via `readArtifactBytesForFreshness` (labels.go:302–309). Zero reads of `reconcile-session.json`.
+- **D4 (byte-identity + no persistence)**: three persistence sites (`reconcile.go:301`, `reconcile.go:499`, `accept.go:160`) call `StripFreshnessLabels` before writing. `TestSliceB_ByteIdentity_NoVerifyField` proves v0.6.1 fixtures (no `Verify` field) round-trip byte-identical. `TestSliceB_PersistedLabels_NeverContainFreshness` verifies freshness labels never appear in persisted `status.json`.
+- **State-or-better**: `satisfiesStateOrBetter` (labels.go:378–397) implements full matrix per §3.4.2 line 251. Tests cover: applied→upstream_merged OK (line 175), upstream_merged→applied stale (line 200), pre-apply→applied OK, blocked→blocked exact-match-only.
+- **Mutual exclusivity**: `deriveFreshnessLabel` (labels.go:318–346) returns exactly one label via early-return structure; truth-table tests verify each path.
+
+**Amend behavior**:
+- `clearVerifyForAmend` sets `Verify=nil` (not `Passed=false`), correctly implementing producer-set rule (c1.go:290–300).
+- Recipe-touching detection via pre/post byte comparison (c1.go:171, 219–224).
+- `--state` flag wired to `validateAmendStateFlag` which rejects ALL values with exit 2 (c1.go:261–269).
+
+**Rendering**:
+- `tpatch status` text mode: calls `DeriveFreshnessLabel` + `mergedLabels`, renders `(label, label)` suffix (cobra.go:298–310).
+- `tpatch status --json`: wraps features in `featureWithFreshness`, emits `freshness_label` + `labels_rendered` (cobra.go:253–264).
+- `tpatch status --dag`: `renderNodeLine` calls `DeriveFreshnessLabel` + `mergedLabels` (status_dag.go:328–355), both text and JSON emit freshness.
+
+**Tests**:
+- Truth-table: 10 test cases cover nil/failed/fresh/stale paths + state-or-better invariants + empty-hash match semantics.
+- D2 invariant: two tests (`TestDependencyGate_IgnoresParentVerifyStaleness`, `TestDependencyGate_IgnoresParentNeverVerified`) prove gate ignores Verify.
+- Byte-identity: two tests (`TestSliceB_ByteIdentity_NoVerifyField`, `TestSliceB_PersistedLabels_NeverContainFreshness`) guard v0.6.1 contract + persistence strip.
+- Amend: four tests cover recipe-touching, deps-only, `--state tested` exit-2, `--state <any>` exit-2.
+- Existing tests: 9 tests in `labels_test.go` + `labels_upstreamed_test.go` updated to expect `+LabelNeverVerified` in composed label sets.
+
+No findings. Ship it.
+
+---
+
 ## External Supervisor Re-review #4 — M15-W3-SLICE-A — 2026-04-27
 
 **Reviewer**: external supervisor (user)

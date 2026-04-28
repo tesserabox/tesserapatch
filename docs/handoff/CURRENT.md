@@ -34,11 +34,18 @@ D1–D7:
    `tpatch status --dag` (text + JSON) merges the freshness label into
    the rendered label set; the JSON shape gains `freshness_label` and
    `verify` per node.
-5. `tpatch amend`: detects recipe-touching by comparing
-   `apply-recipe.json` bytes pre/post and clears the `Verify`
-   sub-record on diff (`clearVerifyForAmend`). `--state` flag added,
-   wired solely to reject any value (notably `tested`) with
-   `*ExitCodeError{Code:2}` per PRD §9 / ADR-013 D3.
+5. `tpatch amend`: detects recipe-touching by EITHER (a) comparing
+   `apply-recipe.json` bytes pre/post the amend invocation OR (b)
+   comparing the on-disk recipe sha256 against the persisted
+   `Verify.RecipeHashAtVerify` (catches external edits between
+   `tpatch verify` and `tpatch amend`). When either trigger fires,
+   `clearVerifyForAmend` sets `Verify = nil`. Producer-set rule per
+   ADR-013 D3: amend asserts authorship; if the recipe drifted from
+   what Verify recorded, Verify is no longer authoritative. The OR
+   logic was added in revision-1 (`53a4d9a`) after the external
+   supervisor reproduced live Case C against the original pre/post-only
+   path. `--state` flag added, wired solely to reject any value
+   (notably `tested`) with `*ExitCodeError{Code:2}` per PRD §9.
 
 ## Files Changed
 
@@ -103,8 +110,11 @@ $ go build ./cmd/tpatch
   - D1 (no apply-gate behavior change) — `dependency_gate.go`
     untouched; `dependency_gate_freshness_test.go` pins the contract.
   - D2 (apply gate ignores Verify) — same.
-  - D3 (recipe-touching amend invalidates) — pre/post byte compare in
-    `amendCmd` + `clearVerifyForAmend`.
+  - D3 (recipe-touching amend invalidates) — OR-condition in
+    `c1.go:235`: pre/post recipe bytes differ within the amend
+    invocation, OR the on-disk recipe sha256 differs from the
+    persisted `Verify.RecipeHashAtVerify` (`recipeDiffersFromVerify`,
+    `c1.go:295`). Either trigger calls `clearVerifyForAmend`.
   - D4 (no persistence of freshness labels) —
     `slice_b_byte_identity_test.go` enforces.
   - D5 (purity at read time) — `deriveFreshnessLabel` is read-only.
@@ -168,7 +178,9 @@ scoped to specific paths) works without manual `git diff` fallback.
   added `--to <ref>` (defaults to `HEAD`, requires `--from`) and
   `--commit-range <a>..<b>` (mutually exclusive with `--from`/`--to`,
   parsed via `strings.SplitN(value, "..", 2)`). Help text restructured
-  to surface the three modes (working tree / `--from` / `--commit-range`).
+  in `9096d04` to lead with the committed-range modes (`--from` and
+  `--commit-range`) per the headline-first requirement; working-tree
+  default falls below.
 - Tests:
   - `internal/gitutil/capture_from_commits_scoped_test.go` (new):
     `_FilesScoping`, `_ToRefCaps`, `_ExcludesArtifacts`,
@@ -179,10 +191,22 @@ scoped to specific paths) works without manual `git diff` fallback.
     `TestRecordCmd_ToRefCaps`,
     `TestRecordCmd_CommitRange_RejectsWithFrom`,
     `TestRecordCmd_CommitRange_RejectsWithTo`,
+    `TestRecordCmd_To_RequiresFrom` (added in `9096d04` to cover the
+    explicit "--to without --from" rejection),
     `TestRecordCmd_WorkingTreeFilesUnchanged`.
   - `internal/cli/cobra_test.go`: removed obsolete
     `TestRecordFilesIncompatibleWithFrom` (replaced with a comment
     pointing to the new compat test).
+
+### External supervisor verdict
+
+The orthogonal record bug-fix stack (`9e96b38` + `9096d04`) was
+reviewed by the external supervisor as a separate pass and APPROVED.
+Live CLI repro confirmed: `record --from <base> --files <path>`
+produced a patch containing only the scoped path; `--to` without
+`--from` rejected with the intended error. Stack is orthogonal to
+verify/freshness/amend/status — no code-level interference. The only
+finding was handoff drift, addressed in this commit.
 
 ### Validation
 

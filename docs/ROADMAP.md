@@ -206,7 +206,9 @@ lifecycle/freshness conflation. Lifecycle and verification stay separate.
 - **Slice B** — `ReconcileLabel` extension + `composeLabelsFromStatus`
   freshness derivation + `tpatch status` / `--dag` / `--json`
   rendering + `tpatch amend` invalidation + truth-table tests.
-  🚧 staged.
+  ✅ APPROVED (commits `a07acc7` original + `53a4d9a` revision-1
+  fixing amend invalidation dead-branch reproduced live by external
+  supervisor, ~2026-04-28).
 - **Slice C** — V3-V9 real implementations including hard-parent
   topological closure replay (V7/V8). ⬜
 - **Slice D** — `tpatch verify --all` + 6-skill rollout + parity-guard
