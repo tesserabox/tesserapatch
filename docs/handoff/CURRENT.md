@@ -7,7 +7,7 @@
 - **Description**: Slice C — V3–V9 real implementations including
   hard-parent topological closure replay (V7/V8). Replaces the V3–V9
   stubs shipped in Slice A.
-- **Status**: Not Started — staged, awaiting implementer dispatch.
+- **Status**: Review — implementation complete, tests green, awaiting reviewer.
 - **Assigned**: 2026-04-28
 
 ## Scope (per PRD-verify-freshness.md §9 Slice C)
@@ -109,11 +109,70 @@ go build ./cmd/tpatch            # clean
 
 ## Files Changed
 
-(none yet — task not started)
+- `internal/workflow/verify.go` — V3–V9 stubs replaced with real
+  implementations + hard-parent closure-replay primitive
+  (`runClosureReplay`, `replayRecipeOpsInShadow`,
+  `replayOpInShadow`, `loadParentRecipe`, `filterHardDeps`,
+  `depSlugsHard`, `parentReplayFail`, `skipV8Because`,
+  `anyBlockFailed`). Added `FailedAt`/`ParentSlug` fields to
+  `VerifyReport` (omitempty). New imports: `os/exec`, `gitutil`,
+  `safety`. `stubChecksAfterAbort` rewritten to emit the correct
+  9-check shape with severities (V6/V9 warn, others block).
+  ~+330 lines.
+- `internal/workflow/verify_test.go` — Added `gitInitVerifyTest`
+  helper; `setupVerifyFeature` now gitInits the repo before
+  `store.Init` so `gitutil.CreateShadow` can create a worktree.
+  Replaced `TestRunVerify_V3_MissingTargetIsDeferredToSliceC` with
+  `TestRunVerify_V3_MissingReplaceTarget_FailsBlock`. Removed
+  `TestRunVerify_StubsCarrySliceReason`. Updated
+  `TestRunVerify_V0V1V2_AllPass` so V3 expects real-pass
+  non-skipped.
+- `internal/workflow/verify_slice_c_test.go` — NEW. 12 unit tests
+  covering V3 (3), V4 (2), V5 (3), V6 (2), V9 (4 incl. source-
+  truth adversarial via poisoned `reconcile-session.json` +
+  `post-reconcile.json`) plus a Slice A V0/V1/V2 regression guard.
+  Includes the `commitInRepo` helper used by closure-replay tests.
+- `internal/workflow/verify_closure_replay_test.go` — NEW. Four
+  closure-replay fixtures: `_3DeepDAG_Happy`,
+  `_ParentFailMidClosure_FailFast` (asserts `failed_at`,
+  `parent_slug`, verbatim PRD §3.4.3 remediation),
+  `_UpstreamMergedParentSkipped`, and `_PrunesShadowOnExit`
+  (pins ADR-013 D7 — shadow always pruned).
 
 ## Test Results
 
-(none yet)
+- `gofmt -l .` → clean.
+- `go build ./cmd/tpatch` → clean.
+- `go test ./...` → all packages green; `internal/workflow` runs
+  in ~20s. `TestRunVerify_*` count: 45 (was ~28 pre-Slice-C).
+
+## Session Summary
+
+Slice C is implemented end-to-end against the single-file
+constraint. Key decisions:
+
+- **V3 op-type scope**: only `replace-in-file` and `append-file`
+  trigger the existence check (mirroring `created_by_gate.go`'s
+  invocation surface). `write-file`/`ensure-directory` create
+  their target so existence is not a precondition.
+- **V9 source-truth adversarial test**: technique (b) — poisoned
+  `reconcile-session.json` + `post-reconcile.json`. If V9 ever
+  parses either file the test would fail; passing proves V9 reads
+  only `status.Reconcile.Outcome`.
+- **Closure replay primitive scope**: kept private to
+  `verify.go`. ADR-010 D2 + ADR-013 §3.4.3 reserve a shared
+  shadow primitive for the M12 resolver — premature extraction
+  rejected.
+- **Parent recipe replay does NOT go through `ExecuteRecipe`**:
+  the shadow has no `.tpatch/`, so the `created_by` apply-time
+  gate cannot run. Implemented `replayOpInShadow` mirroring the
+  4 op types directly. The gate is an apply-time concern, not a
+  replay concern.
+- **Test fixture gitInit**: pre-Slice-C `setupVerifyFeature` did
+  not init a git repo, so V7 would have failed at
+  `gitutil.CreateShadow` for every test. Added
+  `gitInitVerifyTest` (package-local to avoid import cycle with
+  the gitutil test package).
 
 ## Next Steps
 

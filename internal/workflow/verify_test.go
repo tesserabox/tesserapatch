@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,10 +11,43 @@ import (
 	"github.com/tesseracode/tesserapatch/internal/store"
 )
 
+// gitInitVerifyTest provisions a minimal git repo at dir with one
+// committed file. V7's hard-parent closure replay needs a real git
+// worktree so `gitutil.CreateShadow` can succeed.
+func gitInitVerifyTest(t *testing.T, dir string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.email", "tpatch-test@example.com"},
+		{"config", "user.name", "tpatch test"},
+		{"config", "commit.gpgsign", "false"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"add", "hello.txt"},
+		{"commit", "-q", "-m", "init"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+}
+
 // helper: init a store with a feature in `applied` state.
 func setupVerifyFeature(t *testing.T, slug string) *store.Store {
 	t.Helper()
 	tmp := t.TempDir()
+	gitInitVerifyTest(t, tmp)
 	s, err := store.Init(tmp)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
@@ -96,11 +130,12 @@ func TestRunVerify_V0V1V2_AllPass(t *testing.T) {
 			t.Errorf("%s expected real pass; got %+v", id, c)
 		}
 	}
-	// V3 (recipe_op_targets_resolve) is deferred to Slice C; expect a
-	// passed+skipped stub here.
+	// V3 (recipe_op_targets_resolve) is a real Slice C check now;
+	// for an ensure-directory op (no pre-existing target required)
+	// it passes non-skipped.
 	c := must(CheckRecipeOpTargetsResolve)
-	if !c.Passed || !c.Skipped {
-		t.Errorf("%s expected passed+skipped Slice C stub; got %+v", CheckRecipeOpTargetsResolve, c)
+	if !c.Passed || c.Skipped {
+		t.Errorf("%s expected real pass; got %+v", CheckRecipeOpTargetsResolve, c)
 	}
 	if report.Verdict != "passed" || report.ExitCode != 0 {
 		t.Errorf("verdict=%q exit=%d", report.Verdict, report.ExitCode)
@@ -327,37 +362,35 @@ func TestRunVerify_V2_RejectsUnknownFields(t *testing.T) {
 }
 
 // TestRunVerify_V3_MissingTargetIsDeferredToSliceC locks in F3b: a
-// recipe whose `replace-in-file` op points at a non-existent path is
-// NOT a Slice A failure. The op-target-resolve check is deferred to
-// Slice C (it depends on `created_by` semantics). V2 (recipe_parses)
-// passes; V3 (recipe_op_targets_resolve) is a passed+skipped stub.
-func TestRunVerify_V3_MissingTargetIsDeferredToSliceC(t *testing.T) {
+// TestRunVerify_V3_MissingReplaceTarget_FailsBlock locks in the Slice C
+// V3 contract: a `replace-in-file` op against a non-existent path with
+// no `created_by` fails V3 (block severity).
+func TestRunVerify_V3_MissingReplaceTarget_FailsBlock(t *testing.T) {
 	slug := "missing-target"
 	s := setupVerifyFeature(t, slug)
 	writeIntentFiles(t, s, slug)
 	writeVerifyRecipe(t, s, slug, ApplyRecipe{Feature: slug, Operations: []RecipeOperation{
 		{Type: "replace-in-file", Path: "src/does-not-exist.go", Search: "a", Replace: "b"},
 	}})
-	report, err := RunVerify(s, slug, VerifyOptions{})
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
 	if err != nil {
 		t.Fatalf("RunVerify: %v", err)
 	}
-	if report.Verdict != "passed" {
-		t.Errorf("Slice A must not fail on missing op target; got verdict=%s", report.Verdict)
+	if report.Verdict != "failed" {
+		t.Errorf("expected verdict=failed for V3 missing target, got %s", report.Verdict)
 	}
 	for _, c := range report.Checks {
-		switch c.ID {
-		case CheckRecipeParses:
-			if !c.Passed || c.Skipped {
-				t.Errorf("recipe_parses should pass non-skipped on a syntactically valid recipe; got %+v", c)
-			}
-		case CheckRecipeOpTargetsResolve:
-			if !c.Passed || !c.Skipped {
-				t.Errorf("recipe_op_targets_resolve should be a Slice C stub (passed+skipped); got %+v", c)
-			}
-			if !strings.Contains(c.Reason, "Slice C") {
-				t.Errorf("expected reason to name Slice C, got %q", c.Reason)
-			}
+		if c.ID != CheckRecipeOpTargetsResolve {
+			continue
+		}
+		if c.Passed {
+			t.Errorf("V3 must fail on missing replace-in-file target; got %+v", c)
+		}
+		if !strings.Contains(c.Remediation, "src/does-not-exist.go") {
+			t.Errorf("V3 remediation should name the missing path; got %q", c.Remediation)
+		}
+		if !strings.Contains(c.Remediation, "created_by=<parent>") {
+			t.Errorf("V3 remediation should follow PRD §3.1.2 verbatim template; got %q", c.Remediation)
 		}
 	}
 }
@@ -443,38 +476,7 @@ func TestRunVerify_JSONShape(t *testing.T) {
 	}
 }
 
-// ── V3–V9 stubs are passed:true skipped:true with reason ────────────────
-
-func TestRunVerify_StubsCarrySliceReason(t *testing.T) {
-	slug := "stubs"
-	s := setupVerifyFeature(t, slug)
-	writeIntentFiles(t, s, slug)
-
-	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stubIDs := map[string]bool{
-		CheckRecipeOpTargetsResolve:     true,
-		CheckDepMetadataValid:           true,
-		CheckSatisfiedByReachable:       true,
-		CheckDependencyGateSatisfied:    true,
-		CheckRecipeReplayClean:          true,
-		CheckPostApplyPatchReplayClean:  true,
-		CheckReconcileOutcomeConsistent: true,
-	}
-	for _, c := range report.Checks {
-		if !stubIDs[c.ID] {
-			continue
-		}
-		if !c.Passed || !c.Skipped {
-			t.Errorf("stub %s expected passed+skipped, got %+v", c.ID, c)
-		}
-		if !strings.Contains(c.Reason, "Slice") {
-			t.Errorf("stub %s reason should name a slice, got %q", c.ID, c.Reason)
-		}
-	}
-}
+// ── Slice C: V3–V9 are real; the legacy stub-reason test is removed.
 
 // ── V0 abort: status.json read failure ──────────────────────────────────
 
