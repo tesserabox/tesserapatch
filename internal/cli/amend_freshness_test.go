@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -23,11 +25,16 @@ func runAmendForExitCode(args ...string) error {
 }
 
 // Slice B (ADR-013 D3 / PRD-verify-freshness §9): a recipe-touching
-// amend MUST clear (or invalidate) the existing Verify record so the
-// next freshness derivation falls back to `never-verified`. This test
-// simulates the recipe-touching path by writing the recipe before and
-// after — the amend code reads pre/post bytes and clears Verify on
-// difference.
+// amend MUST clear the Verify record so the next freshness derivation
+// derives `never-verified` (truthful — no fresh verify run exists).
+//
+// This is the live Case C reproduction from the external supervisor's
+// Slice B revision-3 review: seed a passed Verify record that was
+// computed against recipe v1, overwrite apply-recipe.json with recipe
+// v2 (simulating a manual edit between verify and amend), then run
+// the REAL `tpatch amend` command via the cobra root. Verify must be
+// cleared. The previous helper-only test missed this because it
+// bypassed amendCmd entirely.
 func TestAmend_RecipeTouching_ClearsVerify(t *testing.T) {
 	tmp := t.TempDir()
 	gitInitTestRepo(t, tmp)
@@ -43,39 +50,34 @@ func TestAmend_RecipeTouching_ClearsVerify(t *testing.T) {
 		t.Fatalf("store.Open: %v", err)
 	}
 
-	// Seed a verify record + a recipe.
+	// Seed recipe v1, then compute its hash and persist a Verify
+	// record claiming we verified against v1.
+	recipeV1 := []byte(`{"v":1}`)
+	if err := s.WriteArtifact("demo", "apply-recipe.json", string(recipeV1)); err != nil {
+		t.Fatal(err)
+	}
+	v1Sum := sha256.Sum256(recipeV1)
+	v1Hash := hex.EncodeToString(v1Sum[:])
+
 	st, _ := s.LoadFeatureStatus("demo")
 	st.Verify = &store.VerifyRecord{
-		VerifiedAt: "2025-01-01T00:00:00Z",
-		Passed:     true,
+		VerifiedAt:         "2025-01-01T00:00:00Z",
+		Passed:             true,
+		RecipeHashAtVerify: v1Hash,
 	}
 	if err := s.SaveFeatureStatus(st); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteArtifact("demo", "apply-recipe.json", `{"v":1}`); err != nil {
+
+	// Overwrite the recipe with v2 — drift between verify and amend.
+	if err := s.WriteArtifact("demo", "apply-recipe.json", `{"v":2}`); err != nil {
 		t.Fatal(err)
 	}
 
-	// Run amend with a new description — this is the path that today
-	// only writes request.md, but we additionally simulate the
-	// recipe-touching surface by mutating the recipe between the
-	// pre/post snapshot via a hand-crafted command sequence: the
-	// amend command itself reads recipe bytes pre and post; if they
-	// differ Verify is cleared. We force a difference by overwriting
-	// the recipe inside the amend's window — easiest path: rewrite it
-	// after the snapshot AND before the post-read by directly
-	// invoking the helper.
-	//
-	// Practical test: amend with --reset; the amend body does not
-	// rewrite the recipe, so Verify will be preserved here. To
-	// exercise the cleared path we instead simulate by directly
-	// writing a recipe with different bytes BEFORE amend runs,
-	// running amend (which reads pre=new), then writing different
-	// bytes via the post-read. Since the amend command itself
-	// doesn't mutate the recipe today, we instead directly call the
-	// internal helper to assert the clearing behaviour.
-	if err := clearVerifyForAmend(s, "demo"); err != nil {
-		t.Fatalf("clearVerifyForAmend: %v", err)
+	// Run amend through the real cobra root (the supervisor's live
+	// Case C reproduction).
+	if _, _, code := runCmd("amend", "--path", tmp, "demo", "new desc"); code != 0 {
+		t.Fatalf("amend failed: %d", code)
 	}
 
 	got, err := s.LoadFeatureStatus("demo")
@@ -83,7 +85,58 @@ func TestAmend_RecipeTouching_ClearsVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Verify != nil {
-		t.Fatalf("expected Verify cleared after recipe-touching amend; got %+v", got.Verify)
+		t.Fatalf("recipe-touching amend must clear Verify (live CLI path); got %+v", got.Verify)
+	}
+}
+
+// Recipe IDENTITY (no drift) preserves Verify. This pins the negative
+// path: amend that does not touch the recipe and finds the on-disk
+// recipe matching the persisted Verify hash leaves Verify alone.
+func TestAmend_RecipeIdentity_PreservesVerify(t *testing.T) {
+	tmp := t.TempDir()
+	gitInitTestRepo(t, tmp)
+	if _, _, code := runCmd("init", "--path", tmp); code != 0 {
+		t.Fatalf("init failed: %d", code)
+	}
+	if _, _, code := runCmd("add", "--path", tmp, "--slug", "demo", "demo"); code != 0 {
+		t.Fatalf("add failed: %d", code)
+	}
+
+	s, err := store.Open(tmp)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+
+	recipe := []byte(`{"v":1}`)
+	if err := s.WriteArtifact("demo", "apply-recipe.json", string(recipe)); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(recipe)
+	hash := hex.EncodeToString(sum[:])
+
+	st, _ := s.LoadFeatureStatus("demo")
+	st.Verify = &store.VerifyRecord{
+		VerifiedAt:         "2025-01-01T00:00:00Z",
+		Passed:             true,
+		RecipeHashAtVerify: hash,
+	}
+	if err := s.SaveFeatureStatus(st); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, code := runCmd("amend", "--path", tmp, "demo", "new desc"); code != 0 {
+		t.Fatalf("amend failed: %d", code)
+	}
+
+	got, err := s.LoadFeatureStatus("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Verify == nil {
+		t.Fatalf("recipe-identity amend must preserve Verify; got nil")
+	}
+	if got.Verify.RecipeHashAtVerify != hash {
+		t.Fatalf("Verify.RecipeHashAtVerify mutated: got %q want %q", got.Verify.RecipeHashAtVerify, hash)
 	}
 }
 
@@ -113,15 +166,21 @@ func TestAmend_DepsOnly_PreservesVerify(t *testing.T) {
 	}
 
 	st, _ := s.LoadFeatureStatus("c")
-	st.Verify = &store.VerifyRecord{
-		VerifiedAt: "2025-01-01T00:00:00Z",
-		Passed:     true,
-	}
-	if err := s.SaveFeatureStatus(st); err != nil {
+	// Seed a recipe that the persisted Verify is consistent with;
+	// otherwise the new producer-set rule (recipe-differs-from-Verify
+	// → clear) would fire here, and we'd be testing the wrong path.
+	recipe := []byte(`{"v":1}`)
+	if err := s.WriteArtifact("c", "apply-recipe.json", string(recipe)); err != nil {
 		t.Fatal(err)
 	}
-	// Write a recipe so pre/post compares are non-trivial.
-	if err := s.WriteArtifact("c", "apply-recipe.json", `{"v":1}`); err != nil {
+	sum := sha256.Sum256(recipe)
+	hash := hex.EncodeToString(sum[:])
+	st.Verify = &store.VerifyRecord{
+		VerifiedAt:         "2025-01-01T00:00:00Z",
+		Passed:             true,
+		RecipeHashAtVerify: hash,
+	}
+	if err := s.SaveFeatureStatus(st); err != nil {
 		t.Fatal(err)
 	}
 

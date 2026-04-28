@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -167,7 +169,16 @@ provided.`,
 			}
 
 			// Capture the recipe's pre-amend bytes so we can detect a
-			// recipe-touching amend post-hoc (Slice B / ADR-013 D3).
+			// recipe-touching amend by either path:
+			//   1. amend itself rewrites apply-recipe.json (no current
+			//      flag does this, but future flags might).
+			//   2. the on-disk recipe already differs from what the
+			//      persisted Verify record was computed against (manual
+			//      edits between `tpatch verify` and `tpatch amend`).
+			// We invalidate Verify if either is true. The producer-set
+			// rule (ADR-013 D3): amend asserts authorship on the
+			// feature; a Verify whose recorded recipe hash no longer
+			// matches the live recipe is stale and must be cleared.
 			recipeBefore := readRecipeBytes(s, slug)
 
 			if !depsOnly {
@@ -210,14 +221,18 @@ provided.`,
 			}
 
 			// Slice B (ADR-013 D3): a recipe-touching amend invalidates
-			// the existing Verify record. Detect by comparing pre/post
-			// bytes of `apply-recipe.json`. Currently no amend flag
-			// rewrites the recipe directly, but the post-hoc compare
-			// is the safe way to express the producer-set rule —
-			// future flags that mutate the recipe pick up the
-			// invalidation for free.
+			// the existing Verify record. Two trigger conditions, EITHER
+			// of which causes the clear:
+			//   (a) amend mutated the recipe in-flight (pre/post bytes
+			//       differ — future-proofing for flags that rewrite
+			//       apply-recipe.json directly).
+			//   (b) the on-disk recipe differs from what the persisted
+			//       Verify recorded (`Verify.RecipeHashAtVerify`).
+			//       External edits between `tpatch verify` and
+			//       `tpatch amend` are caught here — the case the
+			//       external supervisor reproduced for revision-3.
 			recipeAfter := readRecipeBytes(s, slug)
-			if !bytes.Equal(recipeBefore, recipeAfter) {
+			if !bytes.Equal(recipeBefore, recipeAfter) || recipeDiffersFromVerify(s, slug, recipeAfter) {
 				if err := clearVerifyForAmend(s, slug); err != nil {
 					return err
 				}
@@ -266,6 +281,28 @@ func validateAmendStateFlag(value string) error {
 		Code:    2,
 		Message: fmt.Sprintf("amend: no such state %q. Lifecycle states are owned by other verbs (add/analyze/define/explore/implement/apply/reconcile). The freshness overlay (`tpatch verify`) is not a lifecycle state.", value),
 	}
+}
+
+// recipeDiffersFromVerify returns true when the persisted Verify
+// record's recorded recipe hash no longer matches the on-disk recipe.
+// Used by amend to invalidate stale Verify records on the producer-set
+// path (ADR-013 D3): amend takes ownership of the feature; if the
+// recipe has drifted from the verified-against state, the Verify is
+// no longer authoritative and must be cleared. Returns false when
+// there is no Verify record (nothing to invalidate) or when both the
+// recorded hash and the on-disk recipe are absent (mirrors the verify
+// writer's both-absent-is-match semantic).
+func recipeDiffersFromVerify(s *store.Store, slug string, recipeBytes []byte) bool {
+	status, err := s.LoadFeatureStatus(slug)
+	if err != nil || status.Verify == nil {
+		return false
+	}
+	currentHash := ""
+	if len(recipeBytes) > 0 {
+		h := sha256.Sum256(recipeBytes)
+		currentHash = hex.EncodeToString(h[:])
+	}
+	return currentHash != status.Verify.RecipeHashAtVerify
 }
 
 // readRecipeBytes returns the raw bytes of the feature's
