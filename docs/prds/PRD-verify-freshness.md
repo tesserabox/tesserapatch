@@ -57,7 +57,12 @@ Any deviation during implementation requires an ADR-013 amendment before the sli
 
 ## Summary
 
-`tpatch verify <slug>` is a **read-only**, machine-checkable health command that runs every static and apply-simulation check we already know how to run for a single feature, prints a pass/fail report (human and `--json`), and writes a **freshness record** (`Verify` sub-record on `FeatureStatus`) capturing `verified_at`, `passed`, per-check results, hashes of the recipe + patch as observed at verify time, and a snapshot of every hard parent's lifecycle state. The lifecycle state (`FeatureState`) is **never mutated** by verify.
+`tpatch verify <slug>` is a **read-only**, machine-checkable health command that runs every static and apply-simulation check we already know how to run for a single feature, prints a pass/fail report (human and `--json`), and writes a **freshness record** (`Verify` sub-record on `FeatureStatus`) capturing `verified_at`, `passed`, hashes of the recipe + patch as observed at verify time, and a snapshot of every hard parent's lifecycle state. The lifecycle state (`FeatureState`) is **never mutated** by verify.
+
+> **Persistence note (LOG entry `3c122aa` Note 1).** The per-check
+> `check_results` array is stdout-only on `--json`; it is **not**
+> persisted to the `Verify` record. The persisted shape is the minimal
+> set above — see `internal/store/types.go` `VerifyRecord` and §3.4.1.
 
 A derived freshness label (`never-verified` / `verified-fresh` / `verified-stale` / `verify-failed`) is recomputed every time `ComposeLabels` (`internal/workflow/labels.go:89`) runs — purely at read time, from the freshness record + the current DAG snapshot. Drift in the recipe, the patch, or any hard parent's state flips the derived label to `verified-stale` without rewriting `status.json`.
 
@@ -181,7 +186,9 @@ Every fail surfaces a one-line remediation:
 
 Verify is **read-only on the working tree** by ADR-013 D7. It writes exactly one thing, to the store:
 
-1. The `Verify` sub-record on `FeatureStatus` (§3.4.1), including `verified_at`, `passed`, `check_results`, `recipe_hash_at_verify`, `patch_hash_at_verify`, and `parent_snapshot`. `LastCommand = "verify"` and `UpdatedAt` are bumped per existing `store.SaveFeatureStatus` semantics.
+1. The `Verify` sub-record on `FeatureStatus` (§3.4.1), including `verified_at`, `passed`, `recipe_hash_at_verify`, `patch_hash_at_verify`, and `parent_snapshot`. `LastCommand = "verify"` and `UpdatedAt` are bumped per existing `store.SaveFeatureStatus` semantics.
+
+The per-check `check_results` array is **NOT persisted** — it is built in-memory and emitted on `--json` stdout only, per LOG entry `3c122aa` Note 1 (the authoritative disposition). The persisted record carries only the minimal field set needed by Slice B's read-time `ComposeLabels` derivation; the full diagnostic array is harness-consumable via `tpatch verify --json` stdout.
 
 It writes **no** new file in `artifacts/`, no new file under `.tpatch/`, no new entry in `patches/`. The shadow worktree it spins up for V7/V8 is pruned before verify exits, regardless of pass/fail.
 
@@ -209,12 +216,13 @@ type FeatureStatus struct {
 type VerifyRecord struct {
     VerifiedAt          time.Time           `json:"verified_at"`
     Passed              bool                `json:"passed"`
-    CheckResults        []VerifyCheckResult `json:"check_results"`
     RecipeHashAtVerify  string              `json:"recipe_hash_at_verify,omitempty"`
     PatchHashAtVerify   string              `json:"patch_hash_at_verify,omitempty"`
     ParentSnapshot      map[string]FeatureState `json:"parent_snapshot,omitempty"`
 }
 
+// VerifyCheckResult is built in-memory and emitted on --json stdout.
+// It is NOT persisted to status.json (LOG entry 3c122aa Note 1).
 type VerifyCheckResult struct {
     ID          string `json:"id"`
     Severity    string `json:"severity"`     // "block" | "block-abort" | "warn"
@@ -224,6 +232,8 @@ type VerifyCheckResult struct {
 ```
 
 `Verify` is `omitempty`-marshalled: a `nil` pointer round-trips byte-identically with v0.6.1 status.json (D4). Hashes are SHA-256 of the canonical bytes of `apply-recipe.json` and `artifacts/post-apply.patch` respectively, computed at verify time. `ParentSnapshot` is keyed by parent slug; values are the parent's `FeatureState` as observed when verify ran.
+
+The persisted record deliberately does **not** carry the per-check array. The full 10-row check results live on the in-memory `VerifyReport` and are emitted on `tpatch verify --json` stdout only (LOG entry `3c122aa` Note 1 — the authoritative disposition). Slice B's `ComposeLabels` derivation reads only the persisted minimal fields.
 
 `Verify` is **not** a state, **not** a `Reconcile.Outcome`, and **not** an enum value on `FeatureState`. It is a freshness overlay.
 

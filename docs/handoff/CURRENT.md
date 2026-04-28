@@ -125,3 +125,109 @@ None. Awaiting external review.
 - `tpatch verify` lives on the explicit-write side. Do NOT add the field to a read path. ADR-013 D5 + Reviewer Note 1.
 - The `tpatch` root binary is not gitignored. `rm -f tpatch` after `go build`.
 - Every commit must carry the `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>` trailer.
+
+---
+
+## Revision 2 (post-external-review, 2026-04-28)
+
+External supervisor returned 4 binding findings + 1 PRD/schema reconciliation. All five addressed surgically.
+
+### Disposition per finding
+
+- **F1 (typed exit code 2)** — Added `*ExitCodeError{Code, Message}` in new `internal/cli/exit_error.go`. `cli.Execute()` now unwraps `*ExitCodeError` via `asExitCodeError()` and returns its `ExitCode()`; legacy errors still collapse to 1. `verifyCmd.RunE` returns `&ExitCodeError{Code: 2, ...}` on verdict-fail and on refusal. `cmd.SilenceUsage`/`SilenceErrors` set inside RunE. New tests in `internal/cli/exit_error_test.go` lock in the plumb (`TestExecute_PropagatesExitCodeError` parametric over plain-error / ExitCodeError{2,3} / nil).
+- **F2 (refuse pre-apply states, no persist)** — `RunVerify` returns a typed `*RefusedError{Slug,State,Reason}` and a `Verdict: "refused", ExitCode: 2, Reason: "..."` report when the lifecycle state is one of `requested / analyzed / defined / implementing / reconciling / reconciling-shadow`. Allowed: `applied / active / upstream_merged / blocked` (per PRD §5). The refusal early-returns before any `WriteVerifyRecord` call, so status.json stays untouched even with `--no-write` unset. `IsRefused(err)` exported; CLI maps to `ExitCodeError{2}`. New tests: `TestRunVerify_RefusesPreApplyState` (parametric over all six refused states), `TestRunVerify_RefusalNotWrittenEvenWithoutNoWrite` (the supervisor's exact fixture path), `TestRunVerify_AllowsPostApplyStates` (parametric over the four allowed states).
+- **F3a (strict recipe decode)** — `checkRecipeParses` (renamed from `checkRecipe`) now uses `json.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields().Decode(&recipe)`, matching the canonical pattern in `recipe_createdby_test.go`. `LoadRecipe` in `internal/workflow/recipe.go` left untouched (apply-path behaviour preserved per scope constraint). New test `TestRunVerify_V2_RejectsUnknownFields` locks in the strict-decode contract for verify.
+- **F3b (defer V3 to Slice C)** — `recipe_op_targets_resolve` is now a Slice C stub returning `passed:true, skipped:true, reason:"not yet implemented (Slice C — created_by hard-parent semantics)"`. Slice A's V2 collapses to a single real check (`recipe_parses`); the file-existence check that used to live in V2 is gone, and V3 takes the existing position in the 10-check array (shape preserved). Old test `TestRunVerify_V2_OpTargetMissingFails` replaced by `TestRunVerify_V3_MissingTargetIsDeferredToSliceC` which asserts the same recipe now PASSES Slice A verify (V2 parse OK, V3 stub passed+skipped).
+- **F4 (V1 also requires exploration.md)** — `checkIntentFilesPresent` now iterates `[]string{"spec.md", "exploration.md"}` and fails with file-named remediation on missing/empty for either. Three new tests: `TestRunVerify_V1_FailsWhenExplorationMissing`, `TestRunVerify_V1_FailsWhenExplorationEmpty`, `TestRunVerify_V1_PassesWhenBothPresent`. Existing spec.md tests preserved (and `TestRunVerify_V1_FailsWhenSpecEmpty` updated to write exploration so the failure narrows to spec). Helper `writeExploration` + `writeIntentFiles` introduced.
+- **F5 (PRD prose alignment)** — `docs/prds/PRD-verify-freshness.md` updated in three places (Summary §0, §3.2 list, §3.4.1 Go struct example) to remove `check_results` from the persisted shape and add a one-sentence pointer to LOG entry `3c122aa` Note 1 as the authoritative disposition. ADR-013, store types, and `WriteVerifyRecord` all left untouched.
+
+### V-id mapping note
+
+The supervisor flagged "if the recipe-target check is V2 itself rather than a separate V-id, then V2 collapses". After re-reading PRD §3.1: V2 is `recipe_parses` (a separate row), V3 is `recipe_op_targets_resolve` (a separate row). The codebase's `CheckRecipeOpTargetsResolve` constant maps to PRD V3. So Slice A keeps **V0/V1/V2 real** and **V3–V9 stubbed** — boundary unchanged from the PRD §9 Slice A row. Documented in `verify.go` doc comment and the V3 stub function `stubRecipeOpTargetsResolve`.
+
+### Reproduction transcripts
+
+**Refused path (the supervisor's fixture, post-fix):**
+
+```
+$ ./tpatch_bin init "$tmp"
+$ ./tpatch_bin --path "$tmp" add "Fresh requested verify reproduction"
+  Created feature: fresh-requested-verify-reproduction (state: requested)
+$ ./tpatch_bin --path "$tmp" verify fresh-requested-verify-reproduction
+  verify fresh-requested-verify-reproduction — refused
+  error: feature fresh-requested-verify-reproduction is in lifecycle state "requested";
+         verify refuses pre-apply / mid-flight states (PRD §5)
+EXIT=2
+
+status.json (no `verify` key):
+{
+  "id": "fresh-requested-verify-reproduction",
+  "slug": "fresh-requested-verify-reproduction",
+  "state": "requested",
+  ...
+  "apply": {},
+  "reconcile": {}
+}
+```
+
+**Applied path (manually flipped to `state: applied`):**
+
+```
+=== Test 1: applied + missing intent files (should fail with EXIT=2) ===
+verify demo-applied — failed
+  ✓ [block-abort] status_loaded
+  ✗ [block] intent_files_present — spec.md missing for demo-applied — re-run …
+  ⊘ [block] recipe_parses — no apply-recipe.json (legacy / pre-autogen-era feature)
+  ⊘ [block] recipe_op_targets_resolve — not yet implemented (Slice C — created_by hard-parent semantics)
+  ⊘ [block] dep_metadata_valid — not yet implemented (Slice C)
+  …
+EXIT=2
+
+=== Test 2: applied + spec.md + exploration.md present (should pass with EXIT=0) ===
+verify demo-applied — passed
+  ✓ [block-abort] status_loaded
+  ✓ [block] intent_files_present
+  ⊘ [block] recipe_parses — no apply-recipe.json (legacy / pre-autogen-era feature)
+  ⊘ … (V3–V9 stubs)
+EXIT=0
+
+status.json after passing verify:
+"verify": {
+  "verified_at": "2026-04-28T01:42:25Z",
+  "passed": true
+}
+```
+
+Both reproductions confirm: F1 typed exit code is plumbed end-to-end, F2 refusal does not persist, F4 exploration.md is required for V1 to pass.
+
+### Files Changed (Revision 2)
+
+- `internal/cli/exit_error.go` (new)
+- `internal/cli/exit_error_test.go` (new)
+- `internal/cli/cobra.go` (Execute() unwraps ExitCodeError)
+- `internal/cli/verify.go` (RunE returns ExitCodeError on fail / refusal; SilenceUsage/Errors)
+- `internal/workflow/verify.go` (RefusedError type, postApplyVerifyStates set, V1 dual-file check, V2 strict decode + DisallowUnknownFields, V3 stub `stubRecipeOpTargetsResolve`, refusal early-return, Reason field on report)
+- `internal/workflow/verify_test.go` (existing tests updated for new V1 contract; new tests for F2 refusal, F3a strict decode, F3b V3 deferral, F4 exploration.md)
+- `docs/prds/PRD-verify-freshness.md` (F5 — three prose passages aligned with stdout-only check_results)
+- `docs/handoff/CURRENT.md` (this Revision 2 section)
+
+### Validation
+
+```
+$ gofmt -l .
+(empty)
+$ go test ./...
+ok  github.com/tesseracode/tesserapatch/assets
+ok  github.com/tesseracode/tesserapatch/internal/cli
+ok  github.com/tesseracode/tesserapatch/internal/gitutil
+ok  github.com/tesseracode/tesserapatch/internal/provider
+ok  github.com/tesseracode/tesserapatch/internal/safety
+ok  github.com/tesseracode/tesserapatch/internal/store
+ok  github.com/tesseracode/tesserapatch/internal/workflow
+$ go build ./cmd/tpatch && rm -f tpatch
+(success)
+```
+
+ADR-013 untouched. Store types untouched. Apply gate untouched. Skill stubs untouched. Slice A boundary preserved (no `--all`, no `--shadow`, no closure replay, no `ComposeLabels` integration).
+
+**Status: ready for re-review.**
