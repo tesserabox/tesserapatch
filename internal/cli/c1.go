@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -112,7 +113,22 @@ Reads the description from positional args, or from stdin when none are
 provided.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
 			slug := args[0]
+
+			// Slice B (ADR-013 D3 / PRD-verify-freshness §9):
+			// `amend --state tested` is rejected with exit 2. The
+			// `tested` lifecycle state does not exist under the
+			// freshness-overlay model — verify is an overlay, not a
+			// state. Validate before doing any other work so we never
+			// touch disk on a refused command.
+			if stateFlag, _ := cmd.Flags().GetString("state"); stateFlag != "" {
+				if err := validateAmendStateFlag(stateFlag); err != nil {
+					return err
+				}
+			}
+
 			s, err := openStoreFromCmd(cmd)
 			if err != nil {
 				return err
@@ -149,6 +165,10 @@ provided.`,
 					return fmt.Errorf("provide a new description as arguments or pipe via stdin")
 				}
 			}
+
+			// Capture the recipe's pre-amend bytes so we can detect a
+			// recipe-touching amend post-hoc (Slice B / ADR-013 D3).
+			recipeBefore := readRecipeBytes(s, slug)
 
 			if !depsOnly {
 				var newBody string
@@ -189,6 +209,20 @@ provided.`,
 				}
 			}
 
+			// Slice B (ADR-013 D3): a recipe-touching amend invalidates
+			// the existing Verify record. Detect by comparing pre/post
+			// bytes of `apply-recipe.json`. Currently no amend flag
+			// rewrites the recipe directly, but the post-hoc compare
+			// is the safe way to express the producer-set rule —
+			// future flags that mutate the recipe pick up the
+			// invalidation for free.
+			recipeAfter := readRecipeBytes(s, slug)
+			if !bytes.Equal(recipeBefore, recipeAfter) {
+				if err := clearVerifyForAmend(s, slug); err != nil {
+					return err
+				}
+			}
+
 			status, _ := s.LoadFeatureStatus(slug)
 			verb := "Amended"
 			if appendMode {
@@ -205,7 +239,64 @@ provided.`,
 	cmd.Flags().Bool("append", false, "Append to request.md instead of replacing it")
 	cmd.Flags().StringArray("depends-on", nil, "Add or upgrade a depends_on edge (parent[:hard|:soft], repeatable). Requires features_dependencies.")
 	cmd.Flags().StringArray("remove-depends-on", nil, "Remove a depends_on edge (parent slug, repeatable). Requires features_dependencies.")
+	// Slice B (ADR-013 D3 / PRD-verify-freshness §9 — explicit reject
+	// path for `amend --state tested`). The flag is wired ONLY to
+	// surface a friendly error; no state value is currently accepted
+	// by amend (lifecycle transitions are owned by other verbs).
+	cmd.Flags().String("state", "", "Reserved — amend does not accept arbitrary state transitions")
 	return cmd
+}
+
+// validAmendStates is the empty set: amend deliberately accepts no
+// `--state` values. The flag exists to surface a clean exit-2 error
+// for `amend --state tested` (and any other invented state) per
+// ADR-013 D3 / PRD-verify-freshness §9.
+var validAmendStates = map[string]struct{}{}
+
+// validateAmendStateFlag returns an *ExitCodeError{Code:2} for any
+// `--state <value>` invocation. `tested` in particular is called out
+// because the freshness-overlay redesign (ADR-013) deliberately did
+// NOT add a `tested` lifecycle state — verify is an overlay, not a
+// state transition.
+func validateAmendStateFlag(value string) error {
+	if _, ok := validAmendStates[value]; ok {
+		return nil
+	}
+	return &ExitCodeError{
+		Code:    2,
+		Message: fmt.Sprintf("amend: no such state %q. Lifecycle states are owned by other verbs (add/analyze/define/explore/implement/apply/reconcile). The freshness overlay (`tpatch verify`) is not a lifecycle state.", value),
+	}
+}
+
+// readRecipeBytes returns the raw bytes of the feature's
+// `apply-recipe.json` artifact, or nil if the file is absent /
+// unreadable. Used by amend to detect recipe-touching amends.
+func readRecipeBytes(s *store.Store, slug string) []byte {
+	p := filepath.Join(s.TpatchDir(), "features", slug, "artifacts", "apply-recipe.json")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// clearVerifyForAmend invalidates the Verify sub-record on a recipe-
+// touching amend per ADR-013 D3. We CLEAR the field (set to nil) rather
+// than flip Passed=false so the next ComposeLabels derives
+// `never-verified` (truthful) instead of `verify-failed` (which would
+// imply a verify run had failed). The producer-set rule: amend is a
+// producer of `Verify == nil`; verify is the only producer of a
+// non-nil record.
+func clearVerifyForAmend(s *store.Store, slug string) error {
+	status, err := s.LoadFeatureStatus(slug)
+	if err != nil {
+		return err
+	}
+	if status.Verify == nil {
+		return nil
+	}
+	status.Verify = nil
+	return s.SaveFeatureStatus(status)
 }
 
 // ─── remove ──────────────────────────────────────────────────────────────────

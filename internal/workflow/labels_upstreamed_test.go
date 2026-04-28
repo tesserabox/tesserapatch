@@ -61,7 +61,9 @@ func TestComposeLabels_NonSuppressedOutcome_StillProducesLabels(t *testing.T) {
 	}
 
 	got, _ := ComposeLabels(s, "child")
-	want := []store.ReconcileLabel{store.LabelStaleParentApplied}
+	// Slice B: non-retired child surfaces M14.3 labels AND the
+	// freshness overlay (`never-verified` for unverified children).
+	want := []store.ReconcileLabel{store.LabelNeverVerified, store.LabelStaleParentApplied}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("non-retired child must surface labels; got %v, want %v", got, want)
 	}

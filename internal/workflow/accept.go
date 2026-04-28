@@ -155,8 +155,11 @@ func AcceptShadow(s *store.Store, slug string, files []string, upstreamCommit st
 	if cfg, cerr := s.LoadConfig(); cerr == nil && cfg.DAGEnabled() {
 		labels, lerr := ComposeLabels(s, slug)
 		if lerr == nil {
+			// Slice B (ADR-013 D4): strip freshness labels — they are
+			// read-time only and must never appear in Reconcile.Labels.
+			persisted := StripFreshnessLabels(labels)
 			if st, err := s.LoadFeatureStatus(slug); err == nil {
-				st.Reconcile.Labels = labels
+				st.Reconcile.Labels = persisted
 				if serr := s.SaveFeatureStatus(st); serr != nil {
 					if res.RefreshWarning == "" {
 						res.RefreshWarning = fmt.Sprintf("refresh labels failed: %v", serr)

@@ -79,6 +79,36 @@ const (
 	// updated since the child's last reconcile attempt. The child's
 	// recorded baseline may no longer reflect the parent's current state.
 	LabelStaleParentApplied ReconcileLabel = "stale-parent-applied"
+
+	// Slice B — freshness overlay (ADR-013 D5, PRD-verify-freshness §3.4.2).
+	// Exactly one of these four labels is derived for every FeatureStatus
+	// at READ time by composeLabelsFromStatus. They are NEVER persisted to
+	// status.json (D4 byte-identity contract): persistence call sites
+	// strip them before writing Reconcile.Labels.
+
+	// LabelNeverVerified — `status.Verify == nil`. The feature has never
+	// been through `tpatch verify`. Default freshness label for v0.6.1
+	// fixtures.
+	LabelNeverVerified ReconcileLabel = "never-verified"
+
+	// LabelVerifiedFresh — `status.Verify.Passed == true` AND the recipe
+	// hash + patch hash + every parent_snapshot entry currently match
+	// (state-or-better invariant). The harness can trust the verify
+	// claim against the current world.
+	LabelVerifiedFresh ReconcileLabel = "verified-fresh"
+
+	// LabelVerifiedStale — `status.Verify.Passed == true` but at least
+	// one freshness condition has drifted (recipe rewrite, patch
+	// rewrite, or a parent transitioned to a state the snapshot does
+	// not allow). The persisted record is preserved unchanged; only
+	// the derived label flips.
+	LabelVerifiedStale ReconcileLabel = "verified-stale"
+
+	// LabelVerifyFailed — `status.Verify.Passed == false`. The most
+	// recent verify run reported a blocker. `amend (recipe-touching)`
+	// per ADR-013 D3 may also clear `Passed` to surface invalidation
+	// at write time.
+	LabelVerifyFailed ReconcileLabel = "verify-failed"
 )
 
 // DefaultMaxTokensImplement is the fallback budget for the implement-phase

@@ -29,17 +29,20 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tesseracode/tesserapatch/internal/store"
+	"github.com/tesseracode/tesserapatch/internal/workflow"
 )
 
 // dagJSONNode is the per-feature record emitted by `status --dag --json`.
 type dagJSONNode struct {
-	Slug       string                 `json:"slug"`
-	State      store.FeatureState     `json:"state"`
-	Outcome    string                 `json:"outcome,omitempty"`
-	Effective  string                 `json:"effective_outcome,omitempty"`
-	Labels     []store.ReconcileLabel `json:"labels,omitempty"`
-	DependsOn  []dagJSONEdge          `json:"depends_on,omitempty"`
-	Dependents []dagJSONEdge          `json:"dependents,omitempty"`
+	Slug           string                 `json:"slug"`
+	State          store.FeatureState     `json:"state"`
+	Outcome        string                 `json:"outcome,omitempty"`
+	Effective      string                 `json:"effective_outcome,omitempty"`
+	Labels         []store.ReconcileLabel `json:"labels,omitempty"`
+	FreshnessLabel store.ReconcileLabel   `json:"freshness_label,omitempty"`
+	Verify         *store.VerifyRecord    `json:"verify,omitempty"`
+	DependsOn      []dagJSONEdge          `json:"depends_on,omitempty"`
+	Dependents     []dagJSONEdge          `json:"dependents,omitempty"`
 }
 
 type dagJSONEdge struct {
@@ -196,7 +199,7 @@ func writeDAGTree(
 		}
 		sort.Strings(slugs)
 		for _, sl := range slugs {
-			fmt.Fprintf(out, "  - %s\n", renderNodeLine(byslug[sl]))
+			fmt.Fprintf(out, "  - %s\n", renderNodeLine(s, byslug[sl]))
 		}
 		return nil
 	}
@@ -219,7 +222,7 @@ func writeDAGTree(
 
 	visited := make(map[string]struct{}, len(features))
 	for _, root := range roots {
-		walkTree(out, byslug, children, scoped, visited, root, "", "", true)
+		walkTree(out, s, byslug, children, scoped, visited, root, "", "", true)
 	}
 
 	// Surface unreached in-scope slugs (e.g. orphan children of out-of-
@@ -238,7 +241,7 @@ func writeDAGTree(
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "Orphans (parents out of scope):")
 		for _, o := range orphans {
-			fmt.Fprintf(out, "  - %s\n", renderNodeLine(byslug[o]))
+			fmt.Fprintf(out, "  - %s\n", renderNodeLine(s, byslug[o]))
 		}
 	}
 	return nil
@@ -274,6 +277,7 @@ func computeRoots(features []store.FeatureStatus, graph map[string][]store.Depen
 // printed once; subsequent visits show "(...already shown...)".
 func walkTree(
 	out io.Writer,
+	s *store.Store,
 	byslug map[string]store.FeatureStatus,
 	children map[string][]dagChildEdge,
 	scoped map[string]struct{},
@@ -292,7 +296,7 @@ func walkTree(
 	}
 	visited[slug] = struct{}{}
 
-	fmt.Fprintf(out, "%s%s%s\n", prefix, connector, renderNodeLine(st))
+	fmt.Fprintf(out, "%s%s%s\n", prefix, connector, renderNodeLine(s, st))
 
 	kids := children[slug]
 	// Determine in-scope kids and preserve order.
@@ -317,24 +321,64 @@ func walkTree(
 		if k.kind == store.DependencyKindSoft {
 			arrow = "┄► "
 		}
-		walkTree(out, byslug, children, scoped, visited, k.slug, childPrefix, branch+arrow, isLast)
+		walkTree(out, s, byslug, children, scoped, visited, k.slug, childPrefix, branch+arrow, isLast)
 	}
 	_ = last
 }
 
 // renderNodeLine formats one feature node: `slug [state] outcome (labels)`.
-func renderNodeLine(st store.FeatureStatus) string {
+// The `s` parameter is used to derive the read-time freshness label
+// (Slice B / ADR-013 D5). Pass nil to skip freshness derivation (e.g.
+// in tests that don't care about the freshness overlay).
+func renderNodeLine(s *store.Store, st store.FeatureStatus) string {
+	var freshness store.ReconcileLabel
+	if s != nil {
+		freshness = workflow.DeriveFreshnessLabel(s, st)
+	}
+	return renderNodeLineWithFreshness(st, freshness)
+}
+
+// renderNodeLineWithFreshness is the freshness-aware variant. Callers
+// that have a *store.Store available pass the derived freshness label
+// in; callers without one pass "".
+func renderNodeLineWithFreshness(st store.FeatureStatus, freshness store.ReconcileLabel) string {
 	out := fmt.Sprintf("%s [%s]", st.Slug, st.State)
 	if eff := st.Reconcile.EffectiveOutcome(); eff != "" {
 		out += " " + eff
 	}
-	if len(st.Reconcile.Labels) > 0 {
-		labels := make([]string, len(st.Reconcile.Labels))
-		for i, l := range st.Reconcile.Labels {
-			labels[i] = string(l)
+	labels := mergedLabels(st, freshness)
+	if len(labels) > 0 {
+		strs := make([]string, len(labels))
+		for i, l := range labels {
+			strs[i] = string(l)
 		}
-		out += " (" + strings.Join(labels, ", ") + ")"
+		out += " (" + strings.Join(strs, ", ") + ")"
 	}
+	return out
+}
+
+// mergedLabels returns the persisted M14.3 set + the freshness label
+// (if non-empty), sorted alphabetically. The freshness label is NOT
+// persisted (D4) — render-layer callers compose it on demand.
+func mergedLabels(st store.FeatureStatus, freshness store.ReconcileLabel) []store.ReconcileLabel {
+	if freshness == "" && len(st.Reconcile.Labels) == 0 {
+		return nil
+	}
+	seen := make(map[store.ReconcileLabel]struct{}, len(st.Reconcile.Labels)+1)
+	out := make([]store.ReconcileLabel, 0, len(st.Reconcile.Labels)+1)
+	for _, l := range st.Reconcile.Labels {
+		if _, ok := seen[l]; ok {
+			continue
+		}
+		seen[l] = struct{}{}
+		out = append(out, l)
+	}
+	if freshness != "" {
+		if _, ok := seen[freshness]; !ok {
+			out = append(out, freshness)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
 
@@ -372,12 +416,18 @@ func writeDAGJSON(
 		if !inScope(scoped, f.Slug) {
 			continue
 		}
+		// Slice B (ADR-013 D5): derive the freshness label at render
+		// time and merge it into the labels array. Persisted
+		// Reconcile.Labels carries only M14.3 entries.
+		freshness := workflow.DeriveFreshnessLabel(s, f)
 		node := dagJSONNode{
-			Slug:      f.Slug,
-			State:     f.State,
-			Outcome:   string(f.Reconcile.Outcome),
-			Effective: f.Reconcile.EffectiveOutcome(),
-			Labels:    f.Reconcile.Labels,
+			Slug:           f.Slug,
+			State:          f.State,
+			Outcome:        string(f.Reconcile.Outcome),
+			Effective:      f.Reconcile.EffectiveOutcome(),
+			Labels:         mergedLabels(f, freshness),
+			FreshnessLabel: freshness,
+			Verify:         f.Verify,
 		}
 		for _, d := range f.DependsOn {
 			node.DependsOn = append(node.DependsOn, dagJSONEdge{

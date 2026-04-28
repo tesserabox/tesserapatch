@@ -247,10 +247,27 @@ func statusCmd() *cobra.Command {
 			}
 
 			if asJSON {
+				// Slice B (ADR-013 D5): per-feature, derive the
+				// freshness label at render time and emit it alongside
+				// the labels array + the persisted Verify sub-record.
+				type featureWithFreshness struct {
+					store.FeatureStatus
+					FreshnessLabel store.ReconcileLabel   `json:"freshness_label,omitempty"`
+					RenderedLabels []store.ReconcileLabel `json:"labels_rendered,omitempty"`
+				}
+				rendered := make([]featureWithFreshness, len(features))
+				for i, f := range features {
+					fl := workflow.DeriveFreshnessLabel(s, f)
+					rendered[i] = featureWithFreshness{
+						FeatureStatus:  f,
+						FreshnessLabel: fl,
+						RenderedLabels: mergedLabels(f, fl),
+					}
+				}
 				payload := map[string]any{
 					"root": s.Root, "provider": cfg.Provider,
 					"provider_configured": cfg.Provider.Configured(),
-					"features":            features,
+					"features":            rendered,
 				}
 				if len(dagWarnings) > 0 {
 					payload["dag_warnings"] = dagWarnings
@@ -278,7 +295,17 @@ func statusCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "Features: %d\n", len(features))
 			for _, f := range features {
-				fmt.Fprintf(out, "  - %s [%s] %s\n", f.Slug, f.State, f.Title)
+				freshness := workflow.DeriveFreshnessLabel(s, f)
+				labels := mergedLabels(f, freshness)
+				line := fmt.Sprintf("  - %s [%s] %s", f.Slug, f.State, f.Title)
+				if len(labels) > 0 {
+					strs := make([]string, len(labels))
+					for i, l := range labels {
+						strs[i] = string(l)
+					}
+					line += " (" + strings.Join(strs, ", ") + ")"
+				}
+				fmt.Fprintln(out, line)
 			}
 			if featureSlug != "" || verbose {
 				slugs := []string{}

@@ -145,8 +145,8 @@ func TestStatusDag_RendersLabelsAndOutcome(t *testing.T) {
 	if !strings.Contains(out, "blocked-by-parent-and-needs-resolution") {
 		t.Fatalf("expected compound outcome, got %q", out)
 	}
-	if !strings.Contains(out, "(blocked-by-parent)") {
-		t.Fatalf("expected label suffix, got %q", out)
+	if !strings.Contains(out, "blocked-by-parent, never-verified") {
+		t.Fatalf("expected merged label suffix, got %q", out)
 	}
 }
 

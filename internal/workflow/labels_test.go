@@ -66,8 +66,11 @@ func TestComposeLabels_NoDeps_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComposeLabels: %v", err)
 	}
-	if got != nil {
-		t.Fatalf("no deps must yield nil, got %v", got)
+	// Slice B: a feature with no Verify record always carries
+	// `never-verified`, even when it has no deps.
+	want := []store.ReconcileLabel{store.LabelNeverVerified}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("no deps must yield freshness label only, got %v want %v", got, want)
 	}
 }
 
@@ -79,7 +82,8 @@ func TestComposeLabels_HardParentNotApplied_AddsWaitingOnParent(t *testing.T) {
 	})
 	setParentState(t, s, "parent", store.StateAnalyzed, "", "")
 	got, _ := ComposeLabels(s, "child")
-	want := []store.ReconcileLabel{store.LabelWaitingOnParent}
+	// Slice B: freshness label composes orthogonally with M14.3.
+	want := []store.ReconcileLabel{store.LabelNeverVerified, store.LabelWaitingOnParent}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -93,7 +97,7 @@ func TestComposeLabels_HardParentBlocked_AddsBlockedByParent(t *testing.T) {
 	})
 	setParentState(t, s, "parent", store.StateApplied, store.ReconcileBlockedRequiresHuman, "")
 	got, _ := ComposeLabels(s, "child")
-	want := []store.ReconcileLabel{store.LabelBlockedByParent}
+	want := []store.ReconcileLabel{store.LabelBlockedByParent, store.LabelNeverVerified}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -108,8 +112,11 @@ func TestComposeLabels_HardParentApplied_NoLabel(t *testing.T) {
 	setParentState(t, s, "parent", store.StateApplied, store.ReconcileReapplied, "2025-01-01T00:00:00Z")
 	setChildReconcile(t, s, "child", "2025-02-01T00:00:00Z") // child reconciled AFTER parent updated
 	got, _ := ComposeLabels(s, "child")
-	if got != nil {
-		t.Fatalf("clean applied parent must yield no labels, got %v", got)
+	// Slice B: clean applied parent yields no M14.3 labels, but the
+	// freshness overlay always contributes one.
+	want := []store.ReconcileLabel{store.LabelNeverVerified}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("clean applied parent must yield only freshness label, got %v want %v", got, want)
 	}
 }
 
@@ -123,7 +130,7 @@ func TestComposeLabels_HardParentRecentlyChanged_AddsStaleParentApplied(t *testi
 	setChildReconcile(t, s, "child", "2025-01-01T00:00:00Z")
 	setParentState(t, s, "parent", store.StateApplied, store.ReconcileReapplied, "2025-02-01T00:00:00Z")
 	got, _ := ComposeLabels(s, "child")
-	want := []store.ReconcileLabel{store.LabelStaleParentApplied}
+	want := []store.ReconcileLabel{store.LabelNeverVerified, store.LabelStaleParentApplied}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -135,14 +142,15 @@ func TestComposeLabels_SoftParentNeverProducesLabel(t *testing.T) {
 	addPlanFeature(t, s, "child", []store.Dependency{
 		{Slug: "soft-parent", Kind: store.DependencyKindSoft},
 	})
-	// Try to provoke every state — soft must never emit a label.
+	// Try to provoke every state — soft must never emit an M14.3 label.
+	want := []store.ReconcileLabel{store.LabelNeverVerified}
 	for _, state := range []store.FeatureState{
 		store.StateAnalyzed, store.StateBlocked, store.StateApplied,
 	} {
 		setParentState(t, s, "soft-parent", state, store.ReconcileBlockedRequiresHuman, "2099-01-01T00:00:00Z")
 		got, _ := ComposeLabels(s, "child")
-		if got != nil {
-			t.Fatalf("state=%s: soft parent must produce no labels, got %v", state, got)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("state=%s: soft parent must produce only freshness label, got %v want %v", state, got, want)
 		}
 	}
 }
@@ -165,6 +173,7 @@ func TestComposeLabels_MultipleParentsStackLabels(t *testing.T) {
 	got, _ := ComposeLabels(s, "child")
 	want := []store.ReconcileLabel{
 		store.LabelBlockedByParent,
+		store.LabelNeverVerified,
 		store.LabelStaleParentApplied,
 		store.LabelWaitingOnParent,
 	}
@@ -246,10 +255,16 @@ func TestComposeLabels_ReadsStatusJsonNotSessionArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComposeLabels: %v", err)
 	}
-	if got != nil {
+	// Slice B: clean parent yields no M14.3 labels; the only label
+	// surfaced is the freshness overlay (`never-verified`). If
+	// composeLabelsFromStatus ever consulted the session artifact, the
+	// child would carry LabelBlockedByParent in addition to the
+	// freshness label.
+	want := []store.ReconcileLabel{store.LabelNeverVerified}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ComposeLabels read the SESSION ARTIFACT, not status.json. "+
 			"Per ADR-010 D5 / ADR-011 D6, parent verdicts must come from "+
-			"status.Reconcile.Outcome only. Got labels=%v (expected nil).", got)
+			"status.Reconcile.Outcome only. Got labels=%v (expected %v).", got, want)
 	}
 }
 
@@ -262,7 +277,7 @@ func TestComposeLabels_MissingParent_BlockedByParent(t *testing.T) {
 		{Slug: "ghost-parent", Kind: store.DependencyKindHard},
 	})
 	got, _ := ComposeLabels(s, "child")
-	want := []store.ReconcileLabel{store.LabelBlockedByParent}
+	want := []store.ReconcileLabel{store.LabelBlockedByParent, store.LabelNeverVerified}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

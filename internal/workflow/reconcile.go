@@ -291,10 +291,14 @@ func reconcileFeature(ctx context.Context, s *store.Store, slug, upstreamRef, up
 			// computed at read time by ReconcileSummary.EffectiveOutcome.
 			if cfg, cerr := s.LoadConfig(); cerr == nil && cfg.DAGEnabled() {
 				labels, _ := ComposeLabels(s, slug)
+				// Slice B (ADR-013 D4): freshness labels are read-time
+				// only; never persisted to status.json. The
+				// blocked-by-parent check below operates on the unfiltered
+				// set; we strip before persisting via result.Labels.
 				if hasLabel(labels, store.LabelBlockedByParent) {
 					result.Outcome = store.ReconcileBlockedRequiresHuman
 					result.Phase = "phase-3.5-skipped-blocked-by-parent"
-					result.Labels = labels
+					result.Labels = StripFreshnessLabels(labels)
 					result.Conflicts = append(result.Conflicts, preview.ConflictFiles...)
 					result.Notes = append(result.Notes,
 						"phase 3.5 skipped: a hard parent is blocked — resolve the parent first, then retry `tpatch reconcile "+slug+"` (compound verdict: blocked-by-parent-and-needs-resolution)")
@@ -488,8 +492,13 @@ func saveReconcileArtifacts(s *store.Store, slug string, result *ReconcileResult
 		if _, retired := childRetiredOutcomes[result.Outcome]; retired {
 			result.Labels = nil
 		} else if len(result.Labels) == 0 {
-			if labels, lerr := composeLabelsAt(s, slug, result.attemptedAt); lerr == nil && len(labels) > 0 {
-				result.Labels = labels
+			if labels, lerr := composeLabelsAt(s, slug, result.attemptedAt); lerr == nil {
+				// Slice B (ADR-013 D4): strip freshness labels before
+				// persisting. composeLabelsAt now returns the union of
+				// M14.3 + freshness; only M14.3 is persisted.
+				if persisted := StripFreshnessLabels(labels); len(persisted) > 0 {
+					result.Labels = persisted
+				}
 			}
 		}
 	}
