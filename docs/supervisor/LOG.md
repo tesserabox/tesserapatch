@@ -1,3 +1,71 @@
+## Re-review #2 — M15-W3-SLICE-A — 2026-04-28
+
+**Reviewer**: m15-w3-slice-a-reviewer-3
+**Task**: M15-W3-SLICE-A external-review revision verification
+**Commits reviewed**: 1e29f8f + 77cbf50 + c3bb18f (on top of 8e2aabe + 41cc4aa + a4b4262)
+
+### External-review finding verification
+[x] F1 — typed exit code 2 (test + Repro 4)
+[x] F2 — pre-apply refusal without write (Repro 1, 2)
+[x] F3a — strict recipe decode (Repro 5)
+[x] F3b — recipe_op_targets_resolve deferred (Repro 6)
+[x] F4 — V1 includes exploration.md
+[x] F5 — PRD prose aligned with stdout-only check_results
+
+### Cross-cutting
+[x] ADR-013 D1–D7 honored
+[x] dependency_gate.go unmodified
+[x] WriteVerifyRecord call sites: only one (verify success/fail path)
+[x] Slice A boundary intact (no --all, no --shadow, V3–V9 stubs)
+[x] gofmt / go test / go build clean
+[x] All fixture reproductions match expectations
+[x] Co-author trailer on all three commits
+
+### Findings
+
+None.
+
+### Verdict: APPROVED
+
+### Notes
+
+All five external-supervisor findings have been correctly and completely addressed:
+
+**F1 (typed exit code 2)**: `internal/cli/exit_error.go` defines `*ExitCodeError{Code, Message}` with an `ExitCode()` method. `Execute()` unwraps via `asExitCodeError()` and returns the embedded code (lines 37-38 of cobra.go). Verify's RunE returns `&ExitCodeError{Code: 2, ...}` on both refusal and verdict-failed (lines 83, 92-95 of verify.go). Test coverage is parametric (`TestExecute_PropagatesExitCodeError` covers plain error→1, ExitCodeError{2,3}→2/3, nil→0). `SilenceUsage`/`SilenceErrors` set inside RunE (lines 45-46 of verify.go). Repro 4 confirms JSON shape includes `exit_code` field and shell exit matches (0 for passed, 2 for failed).
+
+**F2 (refuse pre-apply states)**: `RunVerify` checks lifecycle state early (lines 181-194 of verify.go) before any `WriteVerifyRecord` call. Refused states: `requested`, `analyzed`, `defined`, `implementing`, `reconciling`, `reconciling-shadow` per `postApplyVerifyStates()` (lines 100-107). Allowed: `applied`, `active`, `upstream_merged`, `blocked`. Returns typed `*RefusedError` with verdict="refused", exit_code=2. Tests: `TestRunVerify_RefusesPreApplyState` (parametric over all 6 refused states), `TestRunVerify_RefusalNotWrittenEvenWithoutNoWrite` (explicit supervisor fixture path), `TestRunVerify_AllowsPostApplyStates` (parametric over 4 allowed states). Repros 1 & 2 confirm: EXIT=2, no `verify` key in status.json on refusal, error message correct.
+
+**F3a (strict recipe decode)**: `checkRecipeParses` uses `json.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields().Decode(&recipe)` (lines 340-342 of verify.go). Test `TestRunVerify_V2_RejectsUnknownFields` locks in the contract with a recipe carrying an unknown field (lines 300-327 of verify_test.go). Repro 5 confirms: unknown field causes V2 to fail with EXIT=2, passed=false.
+
+**F3b (defer V3 to Slice C)**: Per-op target file-existence check is GONE from V2. V2 collapses to `recipe_parses` only. New `stubRecipeOpTargetsResolve()` (lines 381-393 of verify.go) returns `passed:true, skipped:true, reason:"not yet implemented (Slice C — created_by hard-parent semantics)"`. Test `TestRunVerify_V3_MissingTargetIsDeferredToSliceC` asserts a recipe with nonexistent target PASSES V2 (parse OK) and V3 is skipped (lines 329-363 of verify_test.go). V-id renumbering is consistent: no duplicate IDs, no skipped IDs in the 10-check array. Repro 6 confirms: recipe with nonexistent target passes with EXIT=0, V2 passed, V3 skipped.
+
+**F4 (V1 requires exploration.md)**: `checkIntentFilesPresent` iterates `[]string{"spec.md", "exploration.md"}` (line 280 of verify.go). Failure message identifies which file is missing/empty (lines 284-298). Tests: `TestRunVerify_V1_FailsWhenExplorationMissing`, `TestRunVerify_V1_FailsWhenExplorationEmpty`, `TestRunVerify_V1_PassesWhenBothPresent` (lines 171-231 of verify_test.go). Existing spec-only tests updated. Repro 3 confirms: both files required to pass V1.
+
+**F5 (PRD prose alignment)**: Three passages in `docs/prds/PRD-verify-freshness.md` updated:
+- §0 Summary (lines 60-65): removed `per-check results` from persisted-shape list, added note citing LOG `3c122aa` Note 1
+- §3.2 (lines 189-191): removed `check_results` from the listed fields, added clarification paragraph
+- §3.4.1 (lines 216-236): `VerifyRecord` struct no longer carries `CheckResults`; `VerifyCheckResult` retains definition with "stdout-only" comment
+All three passages explicitly cite LOG `3c122aa` Note 1 as authoritative. ADR-013 unchanged. `internal/store/types.go` schema unchanged (VerifyRecord confirmed to NOT have CheckResults field).
+
+**Cross-cutting checks pass**:
+- ADR-013 D1–D7 honored: freshness overlay model intact, apply gate untouched, verify-only writer, omitempty round-trip, derived labels only, status.json source-truth, read-only on working tree
+- `dependency_gate.go` unmodified: `git diff origin/main..main -- internal/workflow/dependency_gate.go` returns empty
+- `WriteVerifyRecord` call sites: exactly ONE at line 233 of verify.go (success/fail path only, unreachable on refusal branch per line 193 early-return)
+- Slice A boundary intact: no `--all`, no `--shadow`, V3–V9 are stubs, no closure replay in this revision, no ComposeLabels integration
+- Validation clean: `gofmt -l .` empty, `go test ./...` all pass (cached), `go build ./cmd/tpatch` succeeds
+- All six fixture reproductions match expectations exactly
+- Co-author trailer present on all three commits (1e29f8f, 77cbf50, c3bb18f)
+
+**Quality observations**:
+1. Test coverage is exemplary: parametric tests for F2 (6 refused states, 4 allowed states), F3a/F3b/F4 all have dedicated regression locks
+2. Error messages are clear and actionable (F2 cites PRD §5, F4 names the missing file)
+3. Commit granularity is appropriate: F1 isolated in its own commit, F2/F3a/F3b/F4 batched together (all touch verify.go), F5 docs-only
+4. The V-id mapping note in CURRENT.md (lines 144-146) correctly documents the PRD V2/V3 distinction
+
+No blocking findings. No notes. Revision 2 is complete and correct.
+
+---
+
 ## Re-review — M15-W3-SLICE-A — 2026-04-27
 
 **Reviewer**: m15-w3-slice-a-reviewer-2
