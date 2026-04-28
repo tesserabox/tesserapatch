@@ -18,6 +18,7 @@ package workflow
 //     hook are deliberately deferred to Slices C / B respectively.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -63,6 +64,48 @@ type VerifyOptions struct {
 	NoWrite bool // when true, skip persistence of the Verify record.
 }
 
+// RefusedError is returned by RunVerify when the feature's lifecycle
+// state is one of the pre-apply / mid-flight states for which verify
+// has nothing meaningful to assert (PRD-verify-freshness §3.4.5 + §5).
+// The CLI maps this to exit code 2 via ExitCodeError. RunVerify must
+// NOT persist a freshness record on this path.
+type RefusedError struct {
+	Slug   string
+	State  store.FeatureState
+	Reason string
+}
+
+func (e *RefusedError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Reason
+}
+
+// IsRefused reports whether err is a *RefusedError.
+func IsRefused(err error) bool {
+	var r *RefusedError
+	return errors.As(err, &r)
+}
+
+// postApplyVerifyStates is the set of lifecycle states for which
+// `tpatch verify` is allowed to run. Any state outside this set is
+// refused per PRD §5 ("feature is pre-apply, nothing to verify"). The
+// freshness overlay is meaningful only after `apply` has produced the
+// recipe + patch artifacts the checks operate on.
+//
+// `blocked` is allowed because the apply attempt has completed (the
+// blocker is downstream); `upstream_merged` is allowed because the
+// artifacts may still be inspectable post-retirement.
+func postApplyVerifyStates() map[store.FeatureState]bool {
+	return map[store.FeatureState]bool{
+		store.StateApplied:        true,
+		store.StateActive:         true,
+		store.StateUpstreamMerged: true,
+		store.StateBlocked:        true,
+	}
+}
+
 // VerifyReport is the full in-memory result of a verify run. The
 // `Checks` field carries all ten check rows; `Persisted` carries the
 // minimal field set actually written to status.json (Reviewer Note 1).
@@ -70,8 +113,9 @@ type VerifyReport struct {
 	SchemaVersion      string                        `json:"schema_version"`
 	Slug               string                        `json:"slug"`
 	VerifiedAt         string                        `json:"verified_at"`
-	Verdict            string                        `json:"verdict"` // "passed" | "failed"
+	Verdict            string                        `json:"verdict"` // "passed" | "failed" | "refused"
 	ExitCode           int                           `json:"exit_code"`
+	Reason             string                        `json:"reason,omitempty"` // populated on "refused"
 	Checks             []store.VerifyCheckResult     `json:"checks"`
 	LifecycleState     store.FeatureState            `json:"lifecycle_state"`
 	RecipeHashAtVerify string                        `json:"recipe_hash_at_verify,omitempty"`
@@ -130,16 +174,38 @@ func RunVerify(s *store.Store, slug string, opts VerifyOptions) (*VerifyReport, 
 	})
 	report.LifecycleState = status.State
 
-	// V1 — intent_files_present (severity: block). Slice A contract:
-	// `spec.md` is the canonical intent file. `request.md` is created
-	// by `tpatch add` and is part of the intent surface as well.
+	// F2 / PRD §3.4.5 + §5: refuse pre-apply / mid-flight lifecycle
+	// states. No persistence on refusal — even with --no-write unset,
+	// status.json must NOT gain a Verify field. The CLI maps this
+	// RefusedError onto exit code 2 (PRD §6 Q7).
+	if !postApplyVerifyStates()[status.State] {
+		reason := fmt.Sprintf("feature %s is in lifecycle state %q; verify refuses pre-apply / mid-flight states (PRD §5)", slug, status.State)
+		refused := &VerifyReport{
+			SchemaVersion:  verifySchemaVersion,
+			Slug:           slug,
+			VerifiedAt:     report.VerifiedAt,
+			Verdict:        "refused",
+			ExitCode:       2,
+			Reason:         reason,
+			Checks:         []store.VerifyCheckResult{},
+			LifecycleState: status.State,
+		}
+		return refused, &RefusedError{Slug: slug, State: status.State, Reason: reason}
+	}
+
+	// V1 — intent_files_present (severity: block). PRD §3.1 row V1
+	// requires `spec.md` AND `exploration.md` exist on disk under
+	// `.tpatch/features/<slug>/` and be non-empty.
 	report.Checks = append(report.Checks, checkIntentFilesPresent(s, slug))
 
-	// V2 — split into two real checks: recipe_parses and
-	// recipe_op_targets_resolve. Note 2 contract: an absent recipe is
-	// `passed: true, skipped: true, reason: "..."` — never a false fail.
-	parseCheck, opCheck, recipe, recipeBytes := checkRecipe(s, slug)
-	report.Checks = append(report.Checks, parseCheck, opCheck)
+	// V2 — recipe_parses (severity: block, real). PRD §3.1 row V2.
+	// V3 (recipe_op_targets_resolve) is deferred to Slice C — see
+	// PRD §9: it depends on `created_by` hard-parent semantics that
+	// Slice A explicitly does not ship. We append a stub here in V3
+	// position to keep the 10-check report shape stable.
+	parseCheck, recipe, recipeBytes := checkRecipeParses(s, slug)
+	report.Checks = append(report.Checks, parseCheck)
+	report.Checks = append(report.Checks, stubRecipeOpTargetsResolve())
 
 	// V3–V9 stubs.
 	report.Checks = append(report.Checks, stubV3toV9()...)
@@ -207,23 +273,28 @@ func (r *VerifyReport) WriteHumanReport(w io.Writer) {
 
 // ── Real checks ──────────────────────────────────────────────────────────
 
+// checkIntentFilesPresent verifies that BOTH `spec.md` and
+// `exploration.md` exist under `.tpatch/features/<slug>/` and are
+// non-empty (PRD-verify-freshness §3.1 V1).
 func checkIntentFilesPresent(s *store.Store, slug string) store.VerifyCheckResult {
-	specPath := filepath.Join(s.Root, ".tpatch", "features", slug, "spec.md")
-	info, err := os.Stat(specPath)
-	if err != nil {
-		return store.VerifyCheckResult{
-			ID:          CheckIntentFilesPresent,
-			Severity:    SeverityBlock,
-			Passed:      false,
-			Remediation: fmt.Sprintf("spec.md missing for %s — run `tpatch define %s` first", slug, slug),
+	for _, name := range []string{"spec.md", "exploration.md"} {
+		path := filepath.Join(s.Root, ".tpatch", "features", slug, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			return store.VerifyCheckResult{
+				ID:          CheckIntentFilesPresent,
+				Severity:    SeverityBlock,
+				Passed:      false,
+				Remediation: fmt.Sprintf("%s missing for %s — re-run the corresponding phase (`tpatch define %s` / `tpatch explore %s`)", name, slug, slug, slug),
+			}
 		}
-	}
-	if info.Size() == 0 {
-		return store.VerifyCheckResult{
-			ID:          CheckIntentFilesPresent,
-			Severity:    SeverityBlock,
-			Passed:      false,
-			Remediation: fmt.Sprintf("spec.md is empty for %s — re-run `tpatch define %s`", slug, slug),
+		if info.Size() == 0 {
+			return store.VerifyCheckResult{
+				ID:          CheckIntentFilesPresent,
+				Severity:    SeverityBlock,
+				Passed:      false,
+				Remediation: fmt.Sprintf("%s is empty for %s — re-run the corresponding phase", name, slug),
+			}
 		}
 	}
 	return store.VerifyCheckResult{
@@ -233,101 +304,55 @@ func checkIntentFilesPresent(s *store.Store, slug string) store.VerifyCheckResul
 	}
 }
 
-// checkRecipe runs the V2 split: parse + op-target resolution. Returns
-// the parsed recipe and its raw bytes for hashing. An absent recipe is
-// `passed: true, skipped: true` (Reviewer Note 2).
-func checkRecipe(s *store.Store, slug string) (parse, ops store.VerifyCheckResult, recipe ApplyRecipe, raw []byte) {
+// checkRecipeParses runs PRD §3.1 V2: parse `apply-recipe.json` with
+// strict (DisallowUnknownFields) decoding. An absent recipe is
+// `passed: true, skipped: true` (Reviewer Note 2). Returns the parsed
+// recipe and its raw bytes for hashing on the persisted record.
+//
+// PRD's V3 (`recipe_op_targets_resolve`) is OUT OF SCOPE for Slice A
+// (see PRD §9 — depends on Slice C `created_by` semantics). V3 is
+// emitted separately as a Slice C stub by `stubRecipeOpTargetsResolve`.
+func checkRecipeParses(s *store.Store, slug string) (parse store.VerifyCheckResult, recipe ApplyRecipe, raw []byte) {
 	recipePath := filepath.Join(s.Root, ".tpatch", "features", slug, "artifacts", "apply-recipe.json")
 	data, err := os.ReadFile(recipePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			skipReason := "no apply-recipe.json (legacy / pre-autogen-era feature)"
-			parse = store.VerifyCheckResult{
+			return store.VerifyCheckResult{
 				ID:       CheckRecipeParses,
 				Severity: SeverityBlock,
 				Passed:   true,
 				Skipped:  true,
-				Reason:   skipReason,
-			}
-			ops = store.VerifyCheckResult{
-				ID:       CheckRecipeOpTargetsResolve,
-				Severity: SeverityBlock,
-				Passed:   true,
-				Skipped:  true,
-				Reason:   skipReason,
-			}
-			return parse, ops, ApplyRecipe{}, nil
+				Reason:   "no apply-recipe.json (legacy / pre-autogen-era feature)",
+			}, ApplyRecipe{}, nil
 		}
-		// Read error other than ENOENT — surface as a parse failure.
-		parse = store.VerifyCheckResult{
+		return store.VerifyCheckResult{
 			ID:          CheckRecipeParses,
 			Severity:    SeverityBlock,
 			Passed:      false,
 			Remediation: fmt.Sprintf("cannot read apply-recipe.json: %v", err),
-		}
-		ops = store.VerifyCheckResult{
-			ID:       CheckRecipeOpTargetsResolve,
-			Severity: SeverityBlock,
-			Passed:   true,
-			Skipped:  true,
-			Reason:   "skipped: recipe could not be read",
-		}
-		return parse, ops, ApplyRecipe{}, nil
+		}, ApplyRecipe{}, nil
 	}
 
-	if jsonErr := json.Unmarshal(data, &recipe); jsonErr != nil {
-		parse = store.VerifyCheckResult{
+	// Strict-decode: reject unknown fields. Mirrors the canonical
+	// pattern guarded by `TestRecipeUnmarshal_DisallowsUnknownFields`
+	// (recipe_createdby_test.go) so a confused agent's invented op
+	// fields fail closed at verify time.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if jsonErr := dec.Decode(&recipe); jsonErr != nil {
+		return store.VerifyCheckResult{
 			ID:          CheckRecipeParses,
 			Severity:    SeverityBlock,
 			Passed:      false,
-			Remediation: fmt.Sprintf("apply-recipe.json does not parse as JSON: %v", jsonErr),
-		}
-		ops = store.VerifyCheckResult{
-			ID:       CheckRecipeOpTargetsResolve,
-			Severity: SeverityBlock,
-			Passed:   true,
-			Skipped:  true,
-			Reason:   "skipped: recipe did not parse",
-		}
-		return parse, ops, ApplyRecipe{}, data
+			Remediation: fmt.Sprintf("apply-recipe.json failed to parse: %v", jsonErr),
+		}, ApplyRecipe{}, data
 	}
 
-	parse = store.VerifyCheckResult{
+	return store.VerifyCheckResult{
 		ID:       CheckRecipeParses,
 		Severity: SeverityBlock,
 		Passed:   true,
-	}
-
-	// Op-target resolution: every op's `path` resolves to a present file
-	// in the working tree. `write-file` and `ensure-directory` ops may
-	// legitimately reference paths that do not yet exist (they create);
-	// `replace-in-file` and `append-file` require the target to exist
-	// at verify time.
-	var failures []string
-	for i, op := range recipe.Operations {
-		switch op.Type {
-		case "replace-in-file", "append-file":
-			target := filepath.Join(s.Root, op.Path)
-			if _, statErr := os.Stat(target); statErr != nil {
-				failures = append(failures, fmt.Sprintf("op #%d (%s) target %q does not resolve: %v", i, op.Type, op.Path, statErr))
-			}
-		}
-	}
-	if len(failures) > 0 {
-		ops = store.VerifyCheckResult{
-			ID:          CheckRecipeOpTargetsResolve,
-			Severity:    SeverityBlock,
-			Passed:      false,
-			Remediation: strings.Join(failures, "; "),
-		}
-		return parse, ops, recipe, data
-	}
-	ops = store.VerifyCheckResult{
-		ID:       CheckRecipeOpTargetsResolve,
-		Severity: SeverityBlock,
-		Passed:   true,
-	}
-	return parse, ops, recipe, data
+	}, recipe, data
 }
 
 // ── Stubs ────────────────────────────────────────────────────────────────
@@ -351,6 +376,20 @@ func stubChecksAfterAbort() []store.VerifyCheckResult {
 	}
 	out = append(out, stubV3toV9()...)
 	return out
+}
+
+// stubRecipeOpTargetsResolve emits PRD's V3 (`recipe_op_targets_resolve`)
+// as a Slice C deferral. PRD §9 places this check in Slice C because it
+// requires `created_by` hard-parent semantics (M14.2) that Slice A
+// explicitly does not ship — see ADR-013 §9 / PRD §3.1 row V3.
+func stubRecipeOpTargetsResolve() store.VerifyCheckResult {
+	return store.VerifyCheckResult{
+		ID:       CheckRecipeOpTargetsResolve,
+		Severity: SeverityBlock,
+		Passed:   true,
+		Skipped:  true,
+		Reason:   "not yet implemented (Slice C — created_by hard-parent semantics)",
+	}
 }
 
 func stubV3toV9() []store.VerifyCheckResult {

@@ -42,6 +42,8 @@ state is never mutated — verify is a freshness overlay, not a state
 transition (ADR-013 D1).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
 			slug := args[0]
 			s, err := openStoreFromCmd(cmd)
 			if err != nil {
@@ -74,13 +76,23 @@ transition (ADR-013 D1).`,
 				fmt.Fprintf(out, "verify %s — %s\n", report.Slug, report.Verdict)
 			}
 
+			// Refusal (pre-apply lifecycle) — surface exit 2 via the
+			// typed error. RunVerify did NOT persist a record on this
+			// path (PRD §3.4.5 + §5).
+			if workflow.IsRefused(runErr) {
+				return &ExitCodeError{Code: 2, Message: runErr.Error()}
+			}
 			if runErr != nil {
 				return runErr
 			}
 			if report.ExitCode != 0 {
-				// Surface a non-zero exit without leaking a noisy error
-				// message — the report is the diagnostic.
-				return fmt.Errorf("verify failed (%d check(s) did not pass)", countFailedBlockers(report))
+				// Verdict-failed — surface exit 2 via the typed error
+				// (PRD §6 Q7) without leaking a noisy message; the
+				// report is the diagnostic.
+				return &ExitCodeError{
+					Code:    report.ExitCode,
+					Message: fmt.Sprintf("verify failed (%d check(s) did not pass)", countFailedBlockers(report)),
+				}
 			}
 			return nil
 		},

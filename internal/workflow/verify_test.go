@@ -35,6 +35,22 @@ func writeSpec(t *testing.T, s *store.Store, slug, body string) {
 	}
 }
 
+// helper: write exploration.md so V1 passes (PRD §3.1 V1 requires both
+// spec.md and exploration.md non-empty).
+func writeExploration(t *testing.T, s *store.Store, slug, body string) {
+	t.Helper()
+	if err := s.WriteFeatureFile(slug, "exploration.md", body); err != nil {
+		t.Fatalf("write exploration.md: %v", err)
+	}
+}
+
+// helper: write both intent files so V1 passes outright.
+func writeIntentFiles(t *testing.T, s *store.Store, slug string) {
+	t.Helper()
+	writeSpec(t, s, slug, "intent text")
+	writeExploration(t, s, slug, "exploration notes")
+}
+
 // helper: write apply-recipe.json so V2 has a recipe to parse.
 func writeVerifyRecipe(t *testing.T, s *store.Store, slug string, recipe ApplyRecipe) {
 	t.Helper()
@@ -52,7 +68,7 @@ func writeVerifyRecipe(t *testing.T, s *store.Store, slug string, recipe ApplyRe
 func TestRunVerify_V0V1V2_AllPass(t *testing.T) {
 	slug := "demo"
 	s := setupVerifyFeature(t, slug)
-	writeSpec(t, s, slug, "intent text")
+	writeIntentFiles(t, s, slug)
 	writeVerifyRecipe(t, s, slug, ApplyRecipe{Feature: slug, Operations: []RecipeOperation{
 		{Type: "ensure-directory", Path: "src"},
 	}})
@@ -73,11 +89,18 @@ func TestRunVerify_V0V1V2_AllPass(t *testing.T) {
 		t.Fatalf("missing check %s", id)
 		return store.VerifyCheckResult{}
 	}
-	for _, id := range []string{CheckStatusLoaded, CheckIntentFilesPresent, CheckRecipeParses, CheckRecipeOpTargetsResolve} {
+	// V0/V1/V2 are real and must pass non-skipped.
+	for _, id := range []string{CheckStatusLoaded, CheckIntentFilesPresent, CheckRecipeParses} {
 		c := must(id)
 		if !c.Passed || c.Skipped {
 			t.Errorf("%s expected real pass; got %+v", id, c)
 		}
+	}
+	// V3 (recipe_op_targets_resolve) is deferred to Slice C; expect a
+	// passed+skipped stub here.
+	c := must(CheckRecipeOpTargetsResolve)
+	if !c.Passed || !c.Skipped {
+		t.Errorf("%s expected passed+skipped Slice C stub; got %+v", CheckRecipeOpTargetsResolve, c)
 	}
 	if report.Verdict != "passed" || report.ExitCode != 0 {
 		t.Errorf("verdict=%q exit=%d", report.Verdict, report.ExitCode)
@@ -127,6 +150,7 @@ func TestRunVerify_V1_FailsWhenSpecEmpty(t *testing.T) {
 	slug := "empty-spec"
 	s := setupVerifyFeature(t, slug)
 	writeSpec(t, s, slug, "")
+	writeExploration(t, s, slug, "exploration body")
 	report, err := RunVerify(s, slug, VerifyOptions{})
 	if err != nil {
 		t.Fatalf("RunVerify: %v", err)
@@ -135,6 +159,78 @@ func TestRunVerify_V1_FailsWhenSpecEmpty(t *testing.T) {
 		if c.ID == CheckIntentFilesPresent {
 			if c.Passed {
 				t.Errorf("expected V1 to fail on empty spec, got %+v", c)
+			}
+			if !strings.Contains(c.Remediation, "spec.md") {
+				t.Errorf("expected remediation to identify spec.md, got %q", c.Remediation)
+			}
+			break
+		}
+	}
+}
+
+// TestRunVerify_V1_FailsWhenExplorationMissing locks in F4: V1 must
+// fail when spec.md is present + non-empty but exploration.md is
+// missing.
+func TestRunVerify_V1_FailsWhenExplorationMissing(t *testing.T) {
+	slug := "no-exploration"
+	s := setupVerifyFeature(t, slug)
+	writeSpec(t, s, slug, "intent body")
+	// no exploration.md
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+	for _, c := range report.Checks {
+		if c.ID == CheckIntentFilesPresent {
+			if c.Passed || c.Skipped {
+				t.Errorf("expected V1 to fail when exploration.md missing, got %+v", c)
+			}
+			if !strings.Contains(c.Remediation, "exploration.md") {
+				t.Errorf("expected remediation to name exploration.md, got %q", c.Remediation)
+			}
+			break
+		}
+	}
+}
+
+// TestRunVerify_V1_FailsWhenExplorationEmpty locks in F4: V1 must fail
+// when exploration.md exists but is zero bytes (empty).
+func TestRunVerify_V1_FailsWhenExplorationEmpty(t *testing.T) {
+	slug := "empty-exploration"
+	s := setupVerifyFeature(t, slug)
+	writeSpec(t, s, slug, "intent body")
+	writeExploration(t, s, slug, "")
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+	for _, c := range report.Checks {
+		if c.ID == CheckIntentFilesPresent {
+			if c.Passed || c.Skipped {
+				t.Errorf("expected V1 to fail on empty exploration, got %+v", c)
+			}
+			if !strings.Contains(c.Remediation, "exploration.md") {
+				t.Errorf("expected remediation to name exploration.md, got %q", c.Remediation)
+			}
+			break
+		}
+	}
+}
+
+// TestRunVerify_V1_PassesWhenBothPresent locks in F4: V1 passes only
+// when BOTH spec.md and exploration.md are present and non-empty.
+func TestRunVerify_V1_PassesWhenBothPresent(t *testing.T) {
+	slug := "both-intents"
+	s := setupVerifyFeature(t, slug)
+	writeIntentFiles(t, s, slug)
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+	for _, c := range report.Checks {
+		if c.ID == CheckIntentFilesPresent {
+			if !c.Passed || c.Skipped {
+				t.Errorf("expected V1 to pass non-skipped, got %+v", c)
 			}
 			break
 		}
@@ -146,7 +242,7 @@ func TestRunVerify_V1_FailsWhenSpecEmpty(t *testing.T) {
 func TestRunVerify_V2_AbsentRecipe_SkippedNotFailed(t *testing.T) {
 	slug := "no-recipe"
 	s := setupVerifyFeature(t, slug)
-	writeSpec(t, s, slug, "intent")
+	writeIntentFiles(t, s, slug)
 	// no apply-recipe.json
 	report, err := RunVerify(s, slug, VerifyOptions{})
 	if err != nil {
@@ -179,7 +275,7 @@ func TestRunVerify_V2_AbsentRecipe_SkippedNotFailed(t *testing.T) {
 func TestRunVerify_V2_MalformedJSONFails(t *testing.T) {
 	slug := "bad-recipe"
 	s := setupVerifyFeature(t, slug)
-	writeSpec(t, s, slug, "intent")
+	writeIntentFiles(t, s, slug)
 	if err := s.WriteArtifact(slug, "apply-recipe.json", "{not valid json"); err != nil {
 		t.Fatal(err)
 	}
@@ -197,12 +293,48 @@ func TestRunVerify_V2_MalformedJSONFails(t *testing.T) {
 	}
 }
 
-// ── V2 fail: replace-in-file target missing ─────────────────────────────
+// TestRunVerify_V2_RejectsUnknownFields locks in F3a: the canonical
+// strict-decode path (DisallowUnknownFields) fails closed when an
+// agent invents an unknown op field — same contract as
+// TestRecipeUnmarshal_DisallowsUnknownFields in recipe_createdby_test.go.
+func TestRunVerify_V2_RejectsUnknownFields(t *testing.T) {
+	slug := "unknown-field"
+	s := setupVerifyFeature(t, slug)
+	writeIntentFiles(t, s, slug)
+	bad := `{
+  "version": 1,
+  "operations": [
+    { "type": "write-file", "path": "x", "content": "", "tag": "oops" }
+  ]
+}`
+	if err := s.WriteArtifact(slug, "apply-recipe.json", bad); err != nil {
+		t.Fatal(err)
+	}
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+	for _, c := range report.Checks {
+		if c.ID == CheckRecipeParses {
+			if c.Passed || c.Skipped {
+				t.Errorf("expected recipe_parses to fail on unknown field, got %+v", c)
+			}
+		}
+	}
+	if report.Verdict != "failed" {
+		t.Errorf("expected failed verdict on unknown-field recipe, got %s", report.Verdict)
+	}
+}
 
-func TestRunVerify_V2_OpTargetMissingFails(t *testing.T) {
+// TestRunVerify_V3_MissingTargetIsDeferredToSliceC locks in F3b: a
+// recipe whose `replace-in-file` op points at a non-existent path is
+// NOT a Slice A failure. The op-target-resolve check is deferred to
+// Slice C (it depends on `created_by` semantics). V2 (recipe_parses)
+// passes; V3 (recipe_op_targets_resolve) is a passed+skipped stub.
+func TestRunVerify_V3_MissingTargetIsDeferredToSliceC(t *testing.T) {
 	slug := "missing-target"
 	s := setupVerifyFeature(t, slug)
-	writeSpec(t, s, slug, "intent")
+	writeIntentFiles(t, s, slug)
 	writeVerifyRecipe(t, s, slug, ApplyRecipe{Feature: slug, Operations: []RecipeOperation{
 		{Type: "replace-in-file", Path: "src/does-not-exist.go", Search: "a", Replace: "b"},
 	}})
@@ -210,13 +342,21 @@ func TestRunVerify_V2_OpTargetMissingFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunVerify: %v", err)
 	}
+	if report.Verdict != "passed" {
+		t.Errorf("Slice A must not fail on missing op target; got verdict=%s", report.Verdict)
+	}
 	for _, c := range report.Checks {
-		if c.ID == CheckRecipeOpTargetsResolve {
-			if c.Passed || c.Skipped {
-				t.Errorf("expected op-targets-resolve to fail, got %+v", c)
+		switch c.ID {
+		case CheckRecipeParses:
+			if !c.Passed || c.Skipped {
+				t.Errorf("recipe_parses should pass non-skipped on a syntactically valid recipe; got %+v", c)
 			}
-			if !strings.Contains(c.Remediation, "src/does-not-exist.go") {
-				t.Errorf("expected remediation to name the missing path, got %q", c.Remediation)
+		case CheckRecipeOpTargetsResolve:
+			if !c.Passed || !c.Skipped {
+				t.Errorf("recipe_op_targets_resolve should be a Slice C stub (passed+skipped); got %+v", c)
+			}
+			if !strings.Contains(c.Reason, "Slice C") {
+				t.Errorf("expected reason to name Slice C, got %q", c.Reason)
 			}
 		}
 	}
@@ -227,7 +367,7 @@ func TestRunVerify_V2_OpTargetMissingFails(t *testing.T) {
 func TestRunVerify_NoWriteDoesNotPersist(t *testing.T) {
 	slug := "nowrite"
 	s := setupVerifyFeature(t, slug)
-	writeSpec(t, s, slug, "intent")
+	writeIntentFiles(t, s, slug)
 	writeVerifyRecipe(t, s, slug, ApplyRecipe{Feature: slug, Operations: nil})
 
 	if _, err := RunVerify(s, slug, VerifyOptions{NoWrite: true}); err != nil {
@@ -259,7 +399,7 @@ func TestRunVerify_NoWriteDoesNotPersist(t *testing.T) {
 func TestRunVerify_JSONShape(t *testing.T) {
 	slug := "shape"
 	s := setupVerifyFeature(t, slug)
-	writeSpec(t, s, slug, "intent")
+	writeIntentFiles(t, s, slug)
 	writeVerifyRecipe(t, s, slug, ApplyRecipe{Feature: slug, Operations: nil})
 
 	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
@@ -308,16 +448,20 @@ func TestRunVerify_JSONShape(t *testing.T) {
 func TestRunVerify_StubsCarrySliceReason(t *testing.T) {
 	slug := "stubs"
 	s := setupVerifyFeature(t, slug)
-	writeSpec(t, s, slug, "intent")
+	writeIntentFiles(t, s, slug)
 
 	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	stubIDs := map[string]bool{
-		CheckDepMetadataValid: true, CheckSatisfiedByReachable: true,
-		CheckDependencyGateSatisfied: true, CheckRecipeReplayClean: true,
-		CheckPostApplyPatchReplayClean: true, CheckReconcileOutcomeConsistent: true,
+		CheckRecipeOpTargetsResolve:     true,
+		CheckDepMetadataValid:           true,
+		CheckSatisfiedByReachable:       true,
+		CheckDependencyGateSatisfied:    true,
+		CheckRecipeReplayClean:          true,
+		CheckPostApplyPatchReplayClean:  true,
+		CheckReconcileOutcomeConsistent: true,
 	}
 	for _, c := range report.Checks {
 		if !stubIDs[c.ID] {
@@ -453,5 +597,132 @@ func TestParentSnapshot_SoftDepsExcluded(t *testing.T) {
 	snap := parentSnapshot(s, child)
 	if snap != nil {
 		t.Fatalf("soft-only deps must yield nil snapshot, got %+v", snap)
+	}
+}
+
+// ── F2 refusal: pre-apply lifecycle states ──────────────────────────────
+
+// TestRunVerify_RefusesPreApplyState locks in F2: a feature in
+// `requested` (or any pre-apply / mid-flight state) must be refused
+// without persisting any Verify record (PRD §3.4.5 + §5).
+func TestRunVerify_RefusesPreApplyState(t *testing.T) {
+	preApply := []store.FeatureState{
+		store.StateRequested,
+		store.StateAnalyzed,
+		store.StateDefined,
+		store.StateImplementing,
+		store.StateReconciling,
+		store.StateReconcilingShadow,
+	}
+	for _, st := range preApply {
+		st := st
+		t.Run(string(st), func(t *testing.T) {
+			tmp := t.TempDir()
+			s, err := store.Init(tmp)
+			if err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			slug := "fresh"
+			if _, err := s.AddFeature(store.AddFeatureInput{Title: slug, Slug: slug, Request: "x"}); err != nil {
+				t.Fatalf("AddFeature: %v", err)
+			}
+			// AddFeature lands the feature in `requested`. Flip if needed.
+			if st != store.StateRequested {
+				if err := s.MarkFeatureState(slug, st, "test", ""); err != nil {
+					t.Fatalf("MarkFeatureState: %v", err)
+				}
+			}
+
+			report, runErr := RunVerify(s, slug, VerifyOptions{})
+			if runErr == nil {
+				t.Fatalf("expected refusal error for state %q, got nil", st)
+			}
+			if !IsRefused(runErr) {
+				t.Errorf("expected RefusedError, got %T: %v", runErr, runErr)
+			}
+			if report == nil {
+				t.Fatal("refusal must still produce a coherent report")
+			}
+			if report.Verdict != "refused" {
+				t.Errorf("verdict=%q, want refused", report.Verdict)
+			}
+			if report.ExitCode != 2 {
+				t.Errorf("exit_code=%d, want 2", report.ExitCode)
+			}
+			if report.Reason == "" {
+				t.Error("expected non-empty reason on refusal")
+			}
+			// status.json must NOT have gained a Verify field.
+			loaded, err := s.LoadFeatureStatus(slug)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Verify != nil {
+				t.Errorf("refusal must not persist; got Verify=%+v", loaded.Verify)
+			}
+		})
+	}
+}
+
+// TestRunVerify_RefusalNotWrittenEvenWithoutNoWrite is the explicit
+// fixture path from the supervisor's reproduction: NoWrite is unset,
+// the feature is in requested, the freshness sub-record must remain
+// absent.
+func TestRunVerify_RefusalNotWrittenEvenWithoutNoWrite(t *testing.T) {
+	tmp := t.TempDir()
+	s, err := store.Init(tmp)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	slug := "fresh-requested-verify-reproduction"
+	if _, err := s.AddFeature(store.AddFeatureInput{Title: slug, Slug: slug, Request: "x"}); err != nil {
+		t.Fatalf("AddFeature: %v", err)
+	}
+	if _, runErr := RunVerify(s, slug, VerifyOptions{ /* NoWrite: false */ }); runErr == nil {
+		t.Fatal("expected refusal error")
+	}
+	loaded, err := s.LoadFeatureStatus(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Verify != nil {
+		t.Errorf("refusal must not persist even when --no-write is unset; got Verify=%+v", loaded.Verify)
+	}
+}
+
+// TestRunVerify_AllowsPostApplyStates locks in the allowed-state set:
+// applied / active / upstream_merged / blocked all run normally
+// (PRD §5).
+func TestRunVerify_AllowsPostApplyStates(t *testing.T) {
+	allowed := []store.FeatureState{
+		store.StateApplied,
+		store.StateActive,
+		store.StateUpstreamMerged,
+		store.StateBlocked,
+	}
+	for _, st := range allowed {
+		st := st
+		t.Run(string(st), func(t *testing.T) {
+			tmp := t.TempDir()
+			s, err := store.Init(tmp)
+			if err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			slug := "ok"
+			if _, err := s.AddFeature(store.AddFeatureInput{Title: slug, Slug: slug, Request: "x"}); err != nil {
+				t.Fatalf("AddFeature: %v", err)
+			}
+			if err := s.MarkFeatureState(slug, st, "test", ""); err != nil {
+				t.Fatalf("MarkFeatureState: %v", err)
+			}
+			writeIntentFiles(t, s, slug)
+			report, runErr := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+			if runErr != nil {
+				t.Fatalf("expected RunVerify to succeed for %q, got %v", st, runErr)
+			}
+			if report.Verdict == "refused" {
+				t.Errorf("state %q must not be refused", st)
+			}
+		})
 	}
 }
