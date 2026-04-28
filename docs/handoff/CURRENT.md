@@ -231,3 +231,94 @@ $ go build ./cmd/tpatch && rm -f tpatch
 ADR-013 untouched. Store types untouched. Apply gate untouched. Skill stubs untouched. Slice A boundary preserved (no `--all`, no `--shadow`, no closure replay, no `ComposeLabels` integration).
 
 **Status: ready for re-review.**
+
+---
+
+## Revision 3 (post-external-review #2, 2026-04-29)
+
+External supervisor's second pass kept Revision 2's fixes (refusal, V1
+exploration.md, strict V2 decode, V3 deferral, PRD prose) and returned
+**one HIGH finding plus a comment-drift cleanup**. Both closed.
+
+### Disposition per finding
+
+- **F1 (HIGH — wrap remaining error paths in ExitCodeError(2))** — `verifyCmd.RunE` had two surviving plain-error returns:
+  1. `openStoreFromCmd` failure (covers both *non-tpatch workspace* and *missing-slug-as-store-error*).
+  2. `RunVerify` returning a non-refusal error (covers *V0 abort* — `status.json` unreadable for the requested slug).
+  Both now return `&ExitCodeError{Code: 2, Message: ...}` so `cli.Execute()` propagates exit 2. The refusal path (`*RefusedError`) and the verdict-failed path are unchanged. Generic cobra errors (usage parse, unknown flag) still fall through to legacy exit 1.
+
+  **Design choice on shape**: PRD §5 lists the *exit-code contract* for non-tpatch workspace, missing slug, and V0 abort but does NOT require a structured `--json` payload for these abort surfaces. Picked the simpler stderr-text form (`"verify aborted: <reason>"`) since `--json` mid-flight aborts have no schema in PRD §4.3. Documented in the comment block on `verifyCmd`.
+
+- **F2 (regression tests)** — Added `internal/cli/verify_test.go` with three test cases that drive `buildRootCmd().Execute()` directly and unwrap the returned error via `errors.As(&ec)` so the typed exit code is asserted (the package's existing `runCmd` helper collapses every error to 1, which would mask exactly the plumbing under test):
+  - `TestVerify_MissingSlug_ExitsTwo` — `init` then `verify nope` → `*ExitCodeError{Code: 2}`.
+  - `TestVerify_NonTpatchWorkspace_ExitsTwo` — `--path` to bare temp dir → `*ExitCodeError{Code: 2}`.
+  - `TestVerify_V0AbortFromRunVerify_ExitsTwo` — feature added, `status.json` overwritten with `{not valid json` → `*ExitCodeError{Code: 2}`.
+
+- **F3 (stale wording)** — `internal/cli/verify.go` doc block, the `verifyCmd.Long` help text, and `internal/workflow/verify.go` top-of-file scope comment all still claimed V2 was "recipe parses + op targets resolve" and that Slice A "ships V0/V1/V2 (… op targets resolve)". Rewrote to:
+  - V2 = `recipe_parses` only.
+  - V3 (`recipe_op_targets_resolve`) is a Slice C stub.
+  - Slice A ships V0/V1/V2 as real, V3–V9 as stubs.
+  Added an explicit "Exit code contract" block in `verify.go` referencing PRD §6 Q7 + §5 so future readers see the typed-exit invariant alongside the help text.
+
+### Reproduction transcripts (supervisor's three cases, post-fix)
+
+```
+$ go build -o ./bin/tpatch-rev3 ./cmd/tpatch && BIN=$(pwd)/bin/tpatch-rev3
+
+# Case A: missing slug, initialized workspace
+$ tmp=$(mktemp -d) && (cd "$tmp" && git init -q && git config user.email t@t && git config user.name t)
+$ $BIN init "$tmp" >/dev/null
+$ $BIN --path "$tmp" verify nope; echo "EXIT=$?"
+verify nope — failed
+  ✗ [block-abort] status_loaded — could not load status.json: …features/nope/status.json: no such file or directory
+  ⊘ [block] intent_files_present — skipped: V0 (status_loaded) aborted the run
+  …
+error: verify aborted: open …/features/nope/status.json: no such file or directory
+EXIT=2
+
+# Case B: non-tpatch workspace
+$ empty=$(mktemp -d)
+$ $BIN --path "$empty" verify nope; echo "EXIT=$?"
+error: verify aborted: could not find .tpatch in this directory or any parent
+EXIT=2
+
+# Case C (bonus): V0 abort via corrupt status.json
+$ $BIN --path "$tmp" add --slug demo demo >/dev/null
+$ echo "{not valid json" > "$tmp/.tpatch/features/demo/status.json"
+$ $BIN --path "$tmp" verify demo; echo "EXIT=$?"
+verify demo — failed
+  ✗ [block-abort] status_loaded — could not load status.json: invalid character 'n' looking for beginning of object key string
+  …
+error: verify aborted: invalid character 'n' looking for beginning of object key string
+EXIT=2
+```
+
+All three previously leaked exit 1; all three now exit 2.
+
+### Files Changed (Revision 3)
+
+- `internal/cli/verify.go` — F1 wraps store-open and RunVerify-non-refusal errors in `ExitCodeError{2}`; F3 rewrites doc block + `Long` help to acknowledge V3 deferral and document the exit-code contract.
+- `internal/workflow/verify.go` — F3 only: top-of-file scope comment updated (V2 = `recipe_parses`; V3 stubbed as Slice C). No behavioural change.
+- `internal/cli/verify_test.go` — new file with the three F2 regression tests.
+- `docs/handoff/CURRENT.md` — this Revision 3 section.
+
+### Validation
+
+```
+$ gofmt -l .
+(empty)
+$ go test ./...
+ok  github.com/tesseracode/tesserapatch/assets
+ok  github.com/tesseracode/tesserapatch/internal/cli
+ok  github.com/tesseracode/tesserapatch/internal/gitutil
+ok  github.com/tesseracode/tesserapatch/internal/provider
+ok  github.com/tesseracode/tesserapatch/internal/safety
+ok  github.com/tesseracode/tesserapatch/internal/store
+ok  github.com/tesseracode/tesserapatch/internal/workflow
+$ go build ./cmd/tpatch && rm -f tpatch
+(success)
+```
+
+ADR-013, PRD-verify-freshness.md, store types, store.go, the apply gate, the refusal path, V1's intent check, V2's strict decode, V3's deferral, and skill stubs are all untouched. Slice A boundary preserved.
+
+**Status: ready for re-review.**

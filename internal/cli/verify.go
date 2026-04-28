@@ -16,8 +16,9 @@ import (
 // by the design.
 //
 // Behaviour:
-//   - Runs V0 / V1 / V2 as real checks; V3–V9 are stubs that emit
-//     `passed: true, skipped: true, reason: "not yet implemented (Slice X)"`
+//   - Runs V0 / V1 / V2 as real checks. V2 is `recipe_parses` only;
+//     `recipe_op_targets_resolve` (V3) and V4–V9 are stubs that emit
+//     `passed: true, skipped: true, reason: "not yet implemented (Slice C)"`
 //     so the 10-check report shape is reviewable in this slice.
 //   - On `--json`, emits the full report (all 10 checks) on stdout. The
 //     persisted `Verify` record carries only the trimmed field set
@@ -27,19 +28,26 @@ import (
 //   - `--quiet` suppresses the human per-check output. Combined with
 //     `--json` only the JSON report is emitted.
 //
-// Exit code mirrors the report verdict: 0 on pass, 2 on fail. RunVerify
-// errors (e.g. status.json load failure in V0) propagate as a non-zero
-// exit via the standard cobra error path.
+// Exit code contract (PRD-verify-freshness §6 Q7 + §5):
+//   - 0  — verdict passed; freshness recorded.
+//   - 2  — every verify failure mode: verdict failed, refused pre-apply
+//     state, V0 abort (status.json unreadable), missing slug, and
+//     running verify outside a tpatch workspace.
+//   - 1  — reserved for generic CLI errors (cobra usage, malformed flag).
+//
+// All exit-2 paths route through *ExitCodeError so cli.Execute() can
+// surface the right OS exit code; only truly generic errors fall through
+// to the legacy exit-1 collapse.
 func verifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify <slug>",
 		Short: "Run integrity checks against a feature's recipe and dependencies (EXPERIMENTAL)",
 		Long: `tpatch verify runs static and apply-simulation checks against a
 feature and writes a freshness-overlay record to status.json. Slice A
-ships V0/V1/V2 (status loaded, intent files present, recipe parses + op
-targets resolve); V3–V9 are stubbed pending Slices C/D. The lifecycle
-state is never mutated — verify is a freshness overlay, not a state
-transition (ADR-013 D1).`,
+ships V0/V1/V2 as real checks (status_loaded, intent_files_present,
+recipe_parses); V3 (recipe_op_targets_resolve) and V4–V9 are stubs
+deferred to Slice C. The lifecycle state is never mutated — verify is
+a freshness overlay, not a state transition (ADR-013 D1).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
@@ -47,7 +55,10 @@ transition (ADR-013 D1).`,
 			slug := args[0]
 			s, err := openStoreFromCmd(cmd)
 			if err != nil {
-				return err
+				// Verify could not even open the workspace — covers
+				// non-tpatch directory and missing-slug-as-store-error
+				// cases. PRD §5 binds both to exit 2.
+				return &ExitCodeError{Code: 2, Message: fmt.Sprintf("verify aborted: %v", err)}
 			}
 
 			asJSON, _ := cmd.Flags().GetBool("json")
@@ -56,7 +67,10 @@ transition (ADR-013 D1).`,
 
 			report, runErr := workflow.RunVerify(s, slug, workflow.VerifyOptions{NoWrite: noWrite})
 			if report == nil {
-				return runErr
+				// RunVerify bailed before producing any report (e.g.
+				// empty-slug guard). PRD §5 maps every verify failure
+				// mode to exit 2.
+				return &ExitCodeError{Code: 2, Message: fmt.Sprintf("verify aborted: %v", runErr)}
 			}
 
 			out := cmd.OutOrStdout()
@@ -83,7 +97,10 @@ transition (ADR-013 D1).`,
 				return &ExitCodeError{Code: 2, Message: runErr.Error()}
 			}
 			if runErr != nil {
-				return runErr
+				// V0 abort and friends (e.g. missing slug surfacing as
+				// LoadFeatureStatus failure). PRD §5 binds these to
+				// exit 2 — the report has already been rendered above.
+				return &ExitCodeError{Code: 2, Message: runErr.Error()}
 			}
 			if report.ExitCode != 0 {
 				// Verdict-failed — surface exit 2 via the typed error

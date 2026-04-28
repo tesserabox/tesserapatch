@@ -4,12 +4,13 @@ package workflow
 //
 // Scope:
 //   - `tpatch verify <slug>` cobra shell wires through `RunVerify`.
-//   - V0 (status_loaded), V1 (intent_files_present), V2 (recipe_parses /
-//     recipe_op_targets_resolve) are real implementations.
-//   - V3–V9 are stubs that return passed: true, skipped: true with a
-//     reason naming the slice that will land them. The full 10-check
-//     array is emitted on `--json` stdout so the report shape is
-//     reviewable in Slice A.
+//   - V0 (status_loaded), V1 (intent_files_present), V2 (recipe_parses)
+//     are the only real implementations in Slice A.
+//   - V3 (recipe_op_targets_resolve) and V4–V9 are stubs that return
+//     passed: true, skipped: true with a reason naming the slice that
+//     will land them (Slice C for V3–V9). The full 10-check array is
+//     emitted on `--json` stdout so the report shape is reviewable in
+//     Slice A.
 //   - The persisted `Verify` record carries only `verified_at`, `passed`,
 //     `recipe_hash_at_verify`, `patch_hash_at_verify`, `parent_snapshot`
 //     (Reviewer Note 1, M15-W3 APPROVED WITH NOTES at 3c122aa). The full
