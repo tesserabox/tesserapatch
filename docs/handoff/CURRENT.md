@@ -93,7 +93,10 @@ guard updates are **Slice D scope**, not Slice C. Don't touch
   - Parent-fail mid-closure → `failed_at: "parent-replay"`.
   - `upstream_merged` parent in middle of closure → skipped without
     error.
-- Concurrency-with-reconcile refusal test (lock contention path).
+- Concurrency-with-reconcile refusal test (state-based refusal per
+  PRD §3.4.6 / verify.go:101 + verify.go:182 — verify refuses when
+  the target's lifecycle state is incompatible; no separate per-slug
+  lock primitive exists or is required).
 - Source-truth adversarial test pinning V9 reads no artifact files.
 
 ## Validation gate (must pass before review dispatch)
@@ -147,9 +150,9 @@ commits.
 - The closure-replay primitive is the architectural core of Slice C.
   Get it right once in `verify.go`; resist any urge to share it with
   the resolver / reconcile paths (ADR-010 D2 boundary).
-- `gitutil.CreateShadow` allocates a worktree under `.tpatch/shadows/`
-  scoped per-slug. `PruneShadow` cleans up. Both already exist from
-  M12.
+- `gitutil.CreateShadow` allocates a worktree under `.tpatch/shadow`
+  (singular, per `internal/gitutil/shadow.go:35`) scoped per-slug.
+  `PruneShadow` cleans up. Both already exist from M12.
 - `store.TopologicalOrder` exists from M14 — pass it the hard-only
   sub-DAG (filter `DependencyKindHard` edges).
 - Slice B's `RecipeHashAtVerify` field on the `Verify` sub-record is
@@ -163,7 +166,9 @@ commits.
   > entry's `remediation` carries the failing parent slug + wrapped
   > error.
   So parent-replay failures DO write `Verify` with passed=false.
-  Pre-V0 aborts (e.g. lock contention) do NOT.
+  State-based refusals (incompatible lifecycle state per
+  verify.go:101 + verify.go:182) abort BEFORE V0 and do NOT write
+  `Verify`.
 
 ## Out of scope (DO NOT touch)
 
