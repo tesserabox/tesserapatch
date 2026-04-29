@@ -237,7 +237,12 @@ func RunVerify(s *store.Store, slug string, opts VerifyOptions) (*VerifyReport, 
 			store.VerifyCheckResult{ID: CheckPostApplyPatchReplayClean, Severity: SeverityBlock, Passed: true, Skipped: true, Reason: "skipped: V7 (recipe_replay_clean) skipped"},
 		)
 	} else {
-		cr := runClosureReplay(s, slug, status, recipe, recipePresent)
+		patchPath := filepath.Join(s.Root, ".tpatch", "features", slug, "artifacts", "post-apply.patch")
+		patchPresent := false
+		if fi, statErr := os.Stat(patchPath); statErr == nil && !fi.IsDir() && fi.Size() > 0 {
+			patchPresent = true
+		}
+		cr := runClosureReplay(s, slug, status, recipe, recipePresent, patchPresent)
 		report.Checks = append(report.Checks, cr.v7, cr.v8)
 		if cr.failedAt != "" {
 			report.FailedAt = cr.failedAt
@@ -791,12 +796,27 @@ type closureReplayResult struct {
 	parentSlug string
 }
 
-func runClosureReplay(s *store.Store, slug string, status store.FeatureStatus, recipe ApplyRecipe, recipePresent bool) closureReplayResult {
-	if !recipePresent {
+func runClosureReplay(s *store.Store, slug string, status store.FeatureStatus, recipe ApplyRecipe, recipePresent, patchPresent bool) closureReplayResult {
+	// Edge case (PRD-verify-freshness §5, line 526): both apply-recipe.json
+	// and post-apply.patch absent → skip V7 and V8, do NOT allocate the
+	// shadow. The shadow is only spun up when at least one of the two
+	// dynamic checks has an artifact to validate.
+	if !recipePresent && !patchPresent {
 		return closureReplayResult{
 			v7: store.VerifyCheckResult{ID: CheckRecipeReplayClean, Severity: SeverityBlock, Passed: true, Skipped: true, Reason: "no apply-recipe.json (precondition not met)"},
-			v8: store.VerifyCheckResult{ID: CheckPostApplyPatchReplayClean, Severity: SeverityBlock, Passed: true, Skipped: true, Reason: "no apply-recipe.json (precondition not met)"},
+			v8: store.VerifyCheckResult{ID: CheckPostApplyPatchReplayClean, Severity: SeverityBlock, Passed: true, Skipped: true, Reason: "no post-apply.patch (precondition not met)"},
 		}
+	}
+
+	// V7 skipped reason when recipe is absent but we still proceed to
+	// allocate the shadow (because patch is present and V8 must run
+	// against the closure-replayed baseline — PRD §5 line 524).
+	v7SkipRecipeAbsent := store.VerifyCheckResult{
+		ID:       CheckRecipeReplayClean,
+		Severity: SeverityBlock,
+		Passed:   true,
+		Skipped:  true,
+		Reason:   "no apply-recipe.json (precondition not met)",
 	}
 
 	// 1. Compute hard-parent closure (BFS over DependencyKindHard).
@@ -866,7 +886,12 @@ func runClosureReplay(s *store.Store, slug string, status store.FeatureStatus, r
 		_ = gitutil.PruneShadow(s.Root, slug)
 	}()
 
-	// 4. Replay parents in topo order, skipping target.
+	// 4. Replay parents in topo order, skipping target. On any
+	// parent-replay failure: V7 carries the parent-replay remediation
+	// (PRD §3.4.3 verbatim form) and V8 is skipped with the
+	// "parent-replay aborted before V8" reason (PRD §4.3.5). This
+	// holds even when recipePresent is false — the parent-replay
+	// failure is still reported on V7.
 	for _, parent := range order {
 		if parent == slug {
 			continue
@@ -875,7 +900,7 @@ func runClosureReplay(s *store.Store, slug string, status store.FeatureStatus, r
 		if err != nil {
 			return closureReplayResult{
 				v7:         parentReplayFail(parent, fmt.Errorf("cannot load parent status: %w", err)),
-				v8:         skipV8Because("V7 (recipe_replay_clean) failed: parent-replay"),
+				v8:         skipV8Because("skipped: parent-replay aborted before V8"),
 				failedAt:   "parent-replay",
 				parentSlug: parent,
 			}
@@ -889,7 +914,7 @@ func runClosureReplay(s *store.Store, slug string, status store.FeatureStatus, r
 			if prerr != nil {
 				return closureReplayResult{
 					v7:         parentReplayFail(parent, prerr),
-					v8:         skipV8Because("V7 (recipe_replay_clean) failed: parent-replay"),
+					v8:         skipV8Because("skipped: parent-replay aborted before V8"),
 					failedAt:   "parent-replay",
 					parentSlug: parent,
 				}
@@ -897,7 +922,7 @@ func runClosureReplay(s *store.Store, slug string, status store.FeatureStatus, r
 			if _, rerr := replayRecipeOpsInShadow(shadowPath, pr.Operations); rerr != nil {
 				return closureReplayResult{
 					v7:         parentReplayFail(parent, rerr),
-					v8:         skipV8Because("V7 (recipe_replay_clean) failed: parent-replay"),
+					v8:         skipV8Because("skipped: parent-replay aborted before V8"),
 					failedAt:   "parent-replay",
 					parentSlug: parent,
 				}
@@ -905,30 +930,38 @@ func runClosureReplay(s *store.Store, slug string, status store.FeatureStatus, r
 		default:
 			return closureReplayResult{
 				v7:         parentReplayFail(parent, fmt.Errorf("parent state is %q (need applied or upstream_merged)", pst.State)),
-				v8:         skipV8Because("V7 (recipe_replay_clean) failed: parent-replay"),
+				v8:         skipV8Because("skipped: parent-replay aborted before V8"),
 				failedAt:   "parent-replay",
 				parentSlug: parent,
 			}
 		}
 	}
 
-	// 5. Apply target's recipe in the same shadow (V7).
-	if opIdx, rerr := replayRecipeOpsInShadow(shadowPath, recipe.Operations); rerr != nil {
-		return closureReplayResult{
-			v7: store.VerifyCheckResult{
-				ID:          CheckRecipeReplayClean,
-				Severity:    SeverityBlock,
-				Passed:      false,
-				Remediation: fmt.Sprintf("recipe op #%d failed in shadow replay: %v; investigate or re-run tpatch implement %s", opIdx, rerr, slug),
-			},
-			v8: skipV8Because("V7 (recipe_replay_clean) failed"),
+	// 5. V7 — apply target's recipe in the same shadow, OR skip if
+	// recipe is absent (PRD §5 line 524: V7 skipped when recipe absent
+	// but V8 still runs against the closure-replayed baseline).
+	var v7 store.VerifyCheckResult
+	if recipePresent {
+		if opIdx, rerr := replayRecipeOpsInShadow(shadowPath, recipe.Operations); rerr != nil {
+			return closureReplayResult{
+				v7: store.VerifyCheckResult{
+					ID:          CheckRecipeReplayClean,
+					Severity:    SeverityBlock,
+					Passed:      false,
+					Remediation: fmt.Sprintf("recipe op #%d failed in shadow replay: %v; investigate or re-run tpatch implement %s", opIdx, rerr, slug),
+				},
+				v8: skipV8Because("V7 (recipe_replay_clean) failed"),
+			}
 		}
+		v7 = store.VerifyCheckResult{ID: CheckRecipeReplayClean, Severity: SeverityBlock, Passed: true}
+	} else {
+		v7 = v7SkipRecipeAbsent
 	}
-	v7 := store.VerifyCheckResult{ID: CheckRecipeReplayClean, Severity: SeverityBlock, Passed: true}
 
-	// 6. V8 — git apply --check post-apply.patch against the shadow.
-	patchPath := filepath.Join(s.Root, ".tpatch", "features", slug, "artifacts", "post-apply.patch")
-	if _, err := os.Stat(patchPath); err != nil {
+	// 6. V8 — git apply --check post-apply.patch against the shadow
+	// (which now contains the closure-replayed baseline, plus the
+	// target recipe if recipePresent). Skip if the patch is absent.
+	if !patchPresent {
 		return closureReplayResult{
 			v7: v7,
 			v8: store.VerifyCheckResult{
@@ -940,6 +973,7 @@ func runClosureReplay(s *store.Store, slug string, status store.FeatureStatus, r
 			},
 		}
 	}
+	patchPath := filepath.Join(s.Root, ".tpatch", "features", slug, "artifacts", "post-apply.patch")
 	cmd := exec.Command("git", "apply", "--check", patchPath)
 	cmd.Dir = shadowPath
 	var stderr bytes.Buffer

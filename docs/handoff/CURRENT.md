@@ -7,7 +7,7 @@
 - **Description**: Slice C — V3–V9 real implementations including
   hard-parent topological closure replay (V7/V8). Replaces the V3–V9
   stubs shipped in Slice A.
-- **Status**: Review — implementation complete, tests green, awaiting reviewer.
+- **Status**: Review — revision-1 complete (HIGH finding fixed), awaiting reviewer.
 - **Assigned**: 2026-04-28
 
 ## Scope (per PRD-verify-freshness.md §9 Slice C)
@@ -107,6 +107,93 @@ go test ./...                    # all packages green
 go build ./cmd/tpatch            # clean
 ```
 
+## Slice C revision-1 (HIGH finding fix)
+
+External supervisor reviewed Slice C @ `32f50c8` and returned NEEDS
+REVISION on a single HIGH finding: `runClosureReplay` short-circuited
+**both** V7 and V8 when `apply-recipe.json` was absent, contradicting
+PRD-verify-freshness §5 line 524:
+
+> Recipe absent (`apply-recipe.json` missing) | V2/V3/V7 are skipped;
+> V8 runs against the closure-replayed baseline if patch is present.
+> V1/V4/V5/V6/V9 run.
+
+The pre-fix behaviour silently passed verify when the post-apply
+patch was unparseable, masking real drift. The supervisor's live
+repro (no recipe + invalid patch text) showed verdict=`passed`,
+V8={`passed:true, skipped:true, reason:"no apply-recipe.json …"`}.
+
+### What changed
+
+- `internal/workflow/verify.go`:
+  - `RunVerify` now probes `post-apply.patch` (non-empty file probe,
+    same shape as the existing V8 stat) and passes `patchPresent`
+    into `runClosureReplay`.
+  - `runClosureReplay` signature extended with `patchPresent bool`.
+    Restructured into four matrix cells:
+    * recipe absent + patch absent → both V7/V8 skipped; **no shadow
+      allocated** (PRD §5 line 526).
+    * recipe absent + patch present → shadow allocated, closure
+      replayed; V7 = skip ("no apply-recipe.json (precondition not
+      met)"), V8 runs `git apply --check` against the closure-
+      replayed baseline.
+    * recipe present + patch absent → V7 runs (existing); V8 skipped
+      ("no post-apply.patch (precondition not met)").
+    * recipe present + patch present → both run (existing).
+  - Parent-replay fail-fast still fires regardless of `recipePresent`:
+    V7 = parent-replay remediation (verbatim PRD §3.4.3 form); V8 =
+    skip with reason `"skipped: parent-replay aborted before V8"`
+    (PRD §4.3.5 example). Reason text updated from the previous
+    less-specific "V7 (recipe_replay_clean) failed: parent-replay".
+  - V8 remediation string remains verbatim PRD §3.1.2: `"post-apply
+    .patch no longer applies to closure-replayed baseline; run
+    tpatch reconcile <slug>"`.
+- `internal/workflow/verify_closure_replay_test.go`: four new tests
+  added at the bottom of the file:
+  * `TestRunVerify_RecipeAbsent_PatchPresent_V8RunsAgainstClosureBaseline`
+    — happy path: V7 skipped, V8 passes against valid new-file patch.
+  * `TestRunVerify_RecipeAbsent_PatchPresent_V8FailsOnInvalidPatch`
+    — **regression test for the supervisor's bug repro**. Asserts
+    V8 fails with verbatim remediation and verdict=failed.
+  * `TestRunVerify_RecipeAbsent_PatchAbsent_BothSkipped` — pins PRD
+    §5 line 526; asserts no shadow lingers under `.tpatch/shadow/`.
+  * `TestRunVerify_RecipeAbsent_PatchPresent_ParentReplayFailFast`
+    — hard parent in `analyzed` state; asserts V7 fail with
+    parent-replay remediation, V8 skipped with PRD §4.3.5 verbatim
+    reason, `failed_at=parent-replay`, `parent_slug=stuck-parent`,
+    verdict=failed.
+
+### Invariants preserved
+
+- ADR-013 D7 — `defer PruneShadow` covers every exit path.
+- Single `CreateShadow` per verify run (gated on
+  `recipePresent || patchPresent`).
+- ADR-010 D2 — closure-replay primitive stays private to
+  `verify.go`.
+- ADR-013 D6 — V9 still reads `status.Reconcile.Outcome` only.
+- Slice B `RecipeHashAtVerify` write semantics unchanged.
+- V0–V2, V3–V6, V9 logic unchanged.
+- Static-before-dynamic ordering preserved.
+- All four existing `TestRunVerify_ClosureReplay_*` tests pass
+  unchanged.
+
+### Live repro proof
+
+BEFORE (pre-fix `32f50c8`, supervisor's exact bug repro):
+
+```
+VERDICT passed
+V8 passed=True skipped=True reason=no apply-recipe.json (precondition not met)
+```
+
+AFTER (rev1, same repro):
+
+```
+VERDICT failed
+V7 passed=True skipped=True reason=no apply-recipe.json (precondition not met)
+V8 passed=False skipped=False remediation=post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile demo
+```
+
 ## Files Changed
 
 - `internal/workflow/verify.go` — V3–V9 stubs replaced with real
@@ -140,6 +227,17 @@ go build ./cmd/tpatch            # clean
   (pins ADR-013 D7 — shadow always pruned).
 
 ## Test Results
+
+- `gofmt -l .` → clean.
+- `go vet ./...` → clean.
+- `go build ./cmd/tpatch` → clean.
+- `go test ./...` → all packages green; `internal/workflow` runs
+  in ~15s. `TestRunVerify_*` count post-revision-1: 49 (was 45 at
+  Slice C land — +4 for revision-1 matrix tests).
+- Live supervisor repro (recipe absent + invalid patch) now reports
+  verdict=failed, V8 fail with verbatim PRD §3.1.2 remediation.
+
+## Test Results (pre-revision-1, kept for context)
 
 - `gofmt -l .` → clean.
 - `go build ./cmd/tpatch` → clean.

@@ -243,6 +243,189 @@ func TestRunVerify_ClosureReplay_PrunesShadowOnExit(t *testing.T) {
 	assertNoShadowFor(t, s, leaf)
 }
 
+// ── Slice C revision-1: recipe-absent + patch-present matrix ───────────
+//
+// PRD-verify-freshness §5 (line 524) edge case: when apply-recipe.json
+// is absent BUT post-apply.patch is present, V7 is skipped (recipe
+// precondition not met) yet V8 must still run against the closure-
+// replayed baseline. The original Slice C wiring short-circuited BOTH
+// V7 and V8 on missing recipe, masking patch drift. These four tests
+// pin the four matrix cells of recipe×patch ∈ {present, absent}² plus
+// the parent-replay fail-fast interaction when recipe is absent.
+
+// validNewFilePatch is a minimal, hand-rolled unified diff that creates
+// a new top-level file. It applies cleanly to any baseline that does
+// not already have rev1-added.txt.
+const validNewFilePatch = `diff --git a/rev1-added.txt b/rev1-added.txt
+new file mode 100644
+--- /dev/null
++++ b/rev1-added.txt
+@@ -0,0 +1 @@
++rev1
+`
+
+// TestRunVerify_RecipeAbsent_PatchPresent_V8RunsAgainstClosureBaseline
+// is the happy-path matrix cell: no recipe, valid patch, no parents.
+// V7 must be skipped (recipe absent), V8 must pass (patch applies).
+func TestRunVerify_RecipeAbsent_PatchPresent_V8RunsAgainstClosureBaseline(t *testing.T) {
+	slug := "rev1-happy"
+	s := setupVerifyFeature(t, slug)
+	writeIntent(t, s, slug)
+	if err := s.WriteArtifact(slug, "post-apply.patch", validNewFilePatch); err != nil {
+		t.Fatalf("write patch: %v", err)
+	}
+
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+
+	v7 := findCheck(t, report, CheckRecipeReplayClean)
+	if !v7.Passed || !v7.Skipped {
+		t.Errorf("V7 must be skipped when recipe absent; got %+v", v7)
+	}
+	if !strings.Contains(v7.Reason, "no apply-recipe.json") {
+		t.Errorf("V7 skip reason must cite missing recipe; got %q", v7.Reason)
+	}
+	v8 := findCheck(t, report, CheckPostApplyPatchReplayClean)
+	if !v8.Passed || v8.Skipped {
+		t.Errorf("V8 must run and pass with valid patch + closure-replayed baseline; got %+v", v8)
+	}
+	if report.Verdict != "passed" {
+		t.Errorf("verdict must be passed; got %q", report.Verdict)
+	}
+	assertNoShadowFor(t, s, slug)
+}
+
+// TestRunVerify_RecipeAbsent_PatchPresent_V8FailsOnInvalidPatch is the
+// REGRESSION TEST for the supervisor's HIGH finding: with no recipe
+// and an INVALID patch, Slice C as shipped reported V8 as
+// {passed:true, skipped:true} and overall verdict=passed. The fix
+// must produce V8 fail with the verbatim PRD §3.1.2 remediation and
+// verdict=failed.
+func TestRunVerify_RecipeAbsent_PatchPresent_V8FailsOnInvalidPatch(t *testing.T) {
+	slug := "rev1-bug"
+	s := setupVerifyFeature(t, slug)
+	writeIntent(t, s, slug)
+	if err := s.WriteArtifact(slug, "post-apply.patch", "this is not a valid patch\n"); err != nil {
+		t.Fatalf("write patch: %v", err)
+	}
+
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+
+	v7 := findCheck(t, report, CheckRecipeReplayClean)
+	if !v7.Passed || !v7.Skipped {
+		t.Errorf("V7 must be skipped (recipe absent); got %+v", v7)
+	}
+	v8 := findCheck(t, report, CheckPostApplyPatchReplayClean)
+	if v8.Passed || v8.Skipped {
+		t.Fatalf("V8 must FAIL on invalid patch (the bug-repro path); got %+v", v8)
+	}
+	wantRem := "post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile " + slug
+	if v8.Remediation != wantRem {
+		t.Errorf("V8 remediation must be PRD §3.1.2 verbatim\n want: %q\n  got: %q", wantRem, v8.Remediation)
+	}
+	if report.Verdict != "failed" {
+		t.Errorf("verdict must be failed; got %q", report.Verdict)
+	}
+	assertNoShadowFor(t, s, slug)
+}
+
+// TestRunVerify_RecipeAbsent_PatchAbsent_BothSkipped pins PRD §5
+// line 526: when BOTH artifacts are absent, V7 and V8 are skipped and
+// no shadow is allocated.
+func TestRunVerify_RecipeAbsent_PatchAbsent_BothSkipped(t *testing.T) {
+	slug := "rev1-both-absent"
+	s := setupVerifyFeature(t, slug)
+	writeIntent(t, s, slug)
+
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+
+	v7 := findCheck(t, report, CheckRecipeReplayClean)
+	if !v7.Passed || !v7.Skipped {
+		t.Errorf("V7 must be skipped; got %+v", v7)
+	}
+	v8 := findCheck(t, report, CheckPostApplyPatchReplayClean)
+	if !v8.Passed || !v8.Skipped {
+		t.Errorf("V8 must be skipped; got %+v", v8)
+	}
+	if report.Verdict != "passed" {
+		t.Errorf("verdict must be passed (warn-only V6 is fine); got %q", report.Verdict)
+	}
+	// Shadow must not have been allocated when both artifacts are
+	// absent. The shadow dir may not exist at all — both states
+	// (absent dir, empty dir) satisfy the contract.
+	shadowDir := filepath.Join(s.Root, ".tpatch", "shadow")
+	if entries, err := os.ReadDir(shadowDir); err == nil {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), slug+"-") {
+				t.Errorf("shadow allocated when both artifacts absent: %s", e.Name())
+			}
+		}
+	}
+}
+
+// TestRunVerify_RecipeAbsent_PatchPresent_ParentReplayFailFast asserts
+// that the parent-replay fail-fast still fires when recipe is absent.
+// V7 must carry the parent-replay remediation (PRD §3.4.3 verbatim
+// form); V8 must be skipped with the PRD §4.3.5 reason
+// "skipped: parent-replay aborted before V8".
+func TestRunVerify_RecipeAbsent_PatchPresent_ParentReplayFailFast(t *testing.T) {
+	slug := "rev1-parentfail"
+	s := setupVerifyFeature(t, slug)
+	writeIntent(t, s, slug)
+	if err := s.WriteArtifact(slug, "post-apply.patch", validNewFilePatch); err != nil {
+		t.Fatalf("write patch: %v", err)
+	}
+
+	// Hard parent in `analyzed` state — non-replayable per
+	// runClosureReplay's parent-state switch (only applied or
+	// upstream_merged are accepted).
+	if _, err := s.AddFeature(store.AddFeatureInput{Title: "stuck-parent", Slug: "stuck-parent", Request: "x"}); err != nil {
+		t.Fatalf("AddFeature parent: %v", err)
+	}
+	if err := s.MarkFeatureState("stuck-parent", store.StateAnalyzed, "analyze", ""); err != nil {
+		t.Fatalf("MarkFeatureState parent: %v", err)
+	}
+	setHardDeps(t, s, slug, []string{"stuck-parent"})
+
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+
+	v7 := findCheck(t, report, CheckRecipeReplayClean)
+	if v7.Passed {
+		t.Errorf("V7 must fail on parent-replay even when target recipe is absent; got %+v", v7)
+	}
+	if !strings.Contains(v7.Remediation, "hard parent stuck-parent failed to replay in shadow") {
+		t.Errorf("V7 must use parent-replay remediation form; got %q", v7.Remediation)
+	}
+	v8 := findCheck(t, report, CheckPostApplyPatchReplayClean)
+	if !v8.Skipped {
+		t.Errorf("V8 must be skipped on parent-replay fail; got %+v", v8)
+	}
+	if v8.Reason != "skipped: parent-replay aborted before V8" {
+		t.Errorf("V8 skip reason must be PRD §4.3.5 verbatim; got %q", v8.Reason)
+	}
+	if report.FailedAt != "parent-replay" {
+		t.Errorf("FailedAt must be 'parent-replay'; got %q", report.FailedAt)
+	}
+	if report.ParentSlug != "stuck-parent" {
+		t.Errorf("ParentSlug must be 'stuck-parent'; got %q", report.ParentSlug)
+	}
+	if report.Verdict != "failed" {
+		t.Errorf("verdict must be failed; got %q", report.Verdict)
+	}
+	assertNoShadowFor(t, s, slug)
+}
+
 // assertNoShadowFor fails the test if any shadow directory for slug
 // still exists under .tpatch/shadow/.
 func assertNoShadowFor(t *testing.T, s *store.Store, slug string) {
