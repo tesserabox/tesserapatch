@@ -210,7 +210,10 @@ lifecycle/freshness conflation. Lifecycle and verification stay separate.
   fixing amend invalidation dead-branch reproduced live by external
   supervisor, ~2026-04-28).
 - **Slice C** — V3-V9 real implementations including hard-parent
-  topological closure replay (V7/V8). ⬜
+  topological closure replay (V7/V8). ✅ APPROVED (commits `32f50c8`
+  original + `5892ae0` revision-1 fixing V8-must-run-on-closure-replayed-baseline-when-recipe-absent-but-patch-present
+  + `23af23e` revision-2 fixing V8-precondition-is-file-presence-not-non-empty-content,
+  ~2026-04-29).
 - **Slice D** — `tpatch verify --all` + 6-skill rollout + parity-guard
   anchors + `docs/dependencies.md` cross-link + CHANGELOG v0.6.2.
   ⬜

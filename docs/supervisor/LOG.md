@@ -1,3 +1,377 @@
+## External Supervisor Review — M15-W3-SLICE-C-REVISION-2 — 2026-04-29
+
+**Reviewer**: external supervisor (user-driven)
+**Task**: Slice C revision-2 — V8 precondition is file presence, not non-empty content
+**Commits reviewed**: `32f50c8` (original) + `5892ae0` (rev-1) + `23af23e` (rev-2)
+
+### Verdict: APPROVED
+
+The one-line fix in `verify.go:242` (drop `&& fi.Size() > 0`) now treats `post-apply.patch` as present based on file existence rather than non-empty size, matching the PRD V8 precondition. The new regression test in `verify_closure_replay_test.go` covers the exact zero-byte false-pass.
+
+External supervisor rebuilt the rev2 binary and reran the original zero-byte repro: V7 skipped (recipe absent), V8 ran and failed with the verbatim §3.1.2 remediation, shadow pruned. Rev1 matrix cells `ABSENT_INVALID`, `ABSENT_ABSENT`, `PRESENT_ABSENT`, `PRESENT_VALID` all preserved; parent-replay fail-fast preserved; D6 source-truth + Slice B amend invalidation regressions still pass. One extra adjacent probe with a zero-byte `apply-recipe.json` failed closed through V2 parse failure (no new false-pass path opened). Validation gate fully green.
+
+Residual caution noted: this class of bug lives in artifact-presence gates; future verify reviews should keep at least one malformed-but-present artifact repro in the loop.
+
+### Action Taken
+
+External supervisor verdict: APPROVED. Slice C complete. Push the full stack, archive Slice C to HISTORY.md, stage Slice D.
+
+---
+
+## External Supervisor Re-review — M15-W3-SLICE-C-REVISION-1 — 2026-04-29
+
+**Reviewer**: external supervisor (user-driven)
+**Task**: Slice C revision-1 — V8 must run against closure-replayed baseline when recipe absent + patch present
+**Commits reviewed**: `32f50c8` (original) + `5892ae0` (rev-1)
+
+### Verdict: NEEDS REVISION (one HIGH finding)
+
+Revision-1 correctly fixed the original `runClosureReplay` short-circuit and the live 2×2 matrix advertised by the implementer — `ABSENT_INVALID` now fails with the expected V8 remediation, `ABSENT_ABSENT`/`ABSENT_VALID`/`PRESENT_ABSENT`/`PRESENT_VALID` all behaved correctly in live repros, parent-replay fail-fast still emits `failed_at: "parent-replay"` with verbatim remediation, shadow pruned every run.
+
+However, an extra-cell stress on a zero-byte `post-apply.patch` exposed a NEW false pass: `verify.go:242` gated `patchPresent` on `fi.Size() > 0`. PRD-verify-freshness.md keys V8 off file presence (§3.1.2 V8 row + edge-case table line 525), not non-empty content. External supervisor reproduced: `applied` feature, no recipe, zero-byte patch → `verdict=passed`, V8 skipped. Confirmed `git apply --check empty.patch` exits 128 with "No valid patches in input", so this is a false-pass on a malformed patch artifact.
+
+D6 source-truth and Slice B amend OR-condition both still passed.
+
+### Action Taken
+
+Dispatched revision-2: change V8 precondition from "non-empty file" to "file exists"; add zero-byte regression test.
+
+---
+
+## External Supervisor Review — M15-W3-SLICE-C — 2026-04-28
+
+**Reviewer**: external supervisor (user-driven)
+**Task**: Slice C — V3–V9 real implementations + hard-parent closure replay (V7/V8)
+**Commit reviewed**: `32f50c8`
+
+### Verdict: NEEDS REVISION (one HIGH finding)
+
+Internal sub-agent review approved the live closure-replay reproductions. External supervisor confirmed: 3-deep DAG happy path passed V7+V8 with shadow pruned; parent-fail-fast emitted `failed_at: "parent-replay"`, `parent_slug`, V7 verbatim remediation, V8 marked skip, shadow pruned. D6 source-truth held against poisoned `reconcile-session.json` + `post-reconcile.json`. Slice B amend OR-condition still functioned against a Slice-C-written Verify record.
+
+HIGH finding: `verify.go:795` (`runClosureReplay`) short-circuited BOTH V7 and V8 when `apply-recipe.json` was absent, contradicting PRD-verify-freshness.md edge-case table line 524 ("Recipe absent | V2/V3/V7 are skipped; V8 runs against the closure-replayed baseline if patch is present"). Live repro: applied feature, no recipe, invalid post-apply.patch → `verdict=passed`, V8 skipped with the recipe-precondition reason. False pass on a path the PRD says must exercise V8.
+
+Operative remediation section is PRD §3.1.2, not §3.4.5. Slice C strings spot-checked aligned to §3.1.2.
+
+### Action Taken
+
+Dispatched revision-1: restructure `runClosureReplay` to handle the four cells of `recipe × patch ∈ {present, absent}²`; add closure-replay-against-no-recipe regression test.
+
+---
+
+## Review — M15-W3-SLICE-C-REVISION-2 — 2026-04-29
+
+**Reviewer**: m15-w3-slice-c-rev2-reviewer (sub-agent)
+**Task**: Slice C revision-2 — V8 precondition is file presence, not non-empty content (PRD §3.1.2 + line 525)
+**Commit reviewed**: 23af23e
+
+### Checklist
+- [x] Diff scope: one logical line removed in production (`&& fi.Size() > 0`)
+- [x] gofmt + go vet + go test + go build clean
+- [x] Live zero-byte repro: VERDICT failed with verbatim remediation
+- [x] Rev1 ABSENT_INVALID still fails correctly (no regression)
+- [x] Rev1 ABSENT_ABSENT still passes with no shadow allocation
+- [x] Rev1 PRESENT_ABSENT V8 skipped for missing file
+- [x] Rev1 PRESENT_VALID both pass
+- [x] Parent-replay fail-fast V8 skip reason verbatim (`TestRunVerify_RecipeAbsent_PatchPresent_ParentReplayFailFast` passes)
+- [x] D6 source-truth invariant intact (`TestRunVerify_V9_SourceTruth_DoesNotReadArtifacts` passes)
+- [x] Slice B amend OR-condition intact (`TestAmend_RecipeTouching_ClearsVerify` passes)
+- [x] Single CreateShadow + single defer PruneShadow (verify.go:871, :883–886)
+- [x] Closure-replay primitive private to verify.go (no external references)
+- [x] No out-of-scope changes (only verify.go, verify_closure_replay_test.go, CURRENT.md)
+- [x] Handoff accurate (cites PRD §3.1.2 + line 525, status=Review, files match `git show --stat`, test count 453)
+
+### Verdict: APPROVED
+
+### Live zero-byte repro outcome
+
+```
+verify demo — failed
+  ✓ [block-abort] status_loaded
+  ✓ [block] intent_files_present
+  ⊘ [block] recipe_parses — no apply-recipe.json (legacy / pre-autogen-era feature)
+  ⊘ [block] recipe_op_targets_resolve — no apply-recipe.json (precondition not met)
+  ✓ [block] dep_metadata_valid
+  ⊘ [block] satisfied_by_reachable — no satisfied_by deps to check
+  ✓ [warn] dependency_gate_satisfied
+  ⊘ [block] recipe_replay_clean — no apply-recipe.json (precondition not met)
+  ✗ [block] post_apply_patch_replay_clean — post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile demo
+  ⊘ [warn] reconcile_outcome_consistent — no Reconcile.Outcome set
+VERDICT failed
+V7 passed=True skipped=True reason='no apply-recipe.json (precondition not met)'
+V8 passed=False skipped=False remediation='post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile demo'
+shadow dir empty (pruned)
+```
+
+Verbatim §3.1.2 remediation. Verdict flips from `passed` (rev1 false-pass) → `failed`. Shadow pruned.
+
+### Live rev1 matrix outcome
+
+| Cell | recipe | patch | VERDICT | V7 | V8 | shadow |
+|------|--------|-------|---------|----|----|--------|
+| ABSENT_INVALID | absent | invalid text | failed | skipped (no recipe) | failed, verbatim §3.1.2 remediation | empty/pruned |
+| ABSENT_ABSENT  | absent | absent | passed | skipped (no recipe) | skipped (`no post-apply.patch (precondition not met)`) | not allocated |
+| PRESENT_ABSENT | empty ops | absent | passed | passed | skipped (`no post-apply.patch (precondition not met)`) | empty/pruned |
+| PRESENT_VALID  | empty ops | valid one-line | passed | passed | passed | empty/pruned |
+
+All four cells match rev1 expectations. Zero regressions from removing the size gate.
+
+### Notes
+
+- Production diff is exactly the change advertised: `internal/workflow/verify.go:242` drops `&& fi.Size() > 0`. No other production touches.
+- Test addition `TestRunVerify_PatchZeroByte_TreatedAsPresent_V8Fails` (verify_closure_replay_test.go) directly exercises the supervisor's reproducer and asserts V8 fail with verbatim remediation; it passes.
+- Test count moves 452 → 453 as advertised (counted via `go test -v` PASS lines).
+- Commit touches only the three files in the contract (verify.go, verify_closure_replay_test.go, docs/handoff/CURRENT.md). No assets/, no cli/, no go.mod, no LOG.md modifications inside commit 23af23e.
+- Remediation string at verify.go:988 matches PRD §3.1.2 (docs/prds/PRD-verify-freshness.md:182) verbatim.
+- CURRENT.md revision-2 block (lines 110–150) cites PRD §3.1.2 V8 row and §5 line 525 explicitly, matches commit message.
+- The fix is the minimal correct fix: `os.Stat` + `!fi.IsDir()` is exactly the file-presence semantics the PRD prescribes; zero-byte content is then surfaced naturally by `git apply --check`'s existing exit-128 path, which routes through the unchanged V8 error branch and emits the locked remediation. Nothing else needed to move.
+
+### Action Taken
+verdict logged for supervisor disposition
+
+---
+
+## Review — M15-W3-SLICE-C-REVISION-1 — 2026-04-28
+
+**Reviewer**: m15-w3-slice-c-rev1-reviewer (sub-agent)
+**Task**: Slice C revision-1 — V8 must run against closure-replayed baseline when recipe absent + patch present (PRD-verify-freshness §5 line 524)
+**Commit reviewed**: 5892ae0
+
+### Checklist
+- [x] Compiles (`go build ./cmd/tpatch` clean)
+- [x] gofmt + go vet clean (`gofmt -l .` empty; `go vet ./...` empty)
+- [x] All tests pass (`go test ./... -count=1` all 8 packages green; `internal/workflow` runs in ~5s; `TestRunVerify_*` count = 49, +4 over Slice C land — matches handoff)
+- [x] Single `CreateShadow` call gated on `recipePresent || patchPresent` — exactly one invocation site at `verify.go:871`; the early-return at `verify.go:804-809` short-circuits the both-absent cell before any allocation
+- [x] `defer PruneShadow` covers every post-allocation exit path — single `defer` at `verify.go:883-887` immediately after the successful `CreateShadow`; the four post-defer return paths (parent-replay-fail × 3 switch arms, target-recipe-fail, V8-pass, V8-fail) all flow through it
+- [x] ADR-010 D2 — `runClosureReplay` / `replayOpInShadow` / `replayRecipeOpsInShadow` / `loadParentRecipe` referenced ONLY inside `internal/workflow/verify.go` and `internal/workflow/verify_*_test.go` (grep across `internal/` confirmed)
+- [x] Single-file production scope — `git show 5892ae0 --stat` lists only `internal/workflow/verify.go`, `internal/workflow/verify_closure_replay_test.go`, `docs/handoff/CURRENT.md`. No `go.mod`/`go.sum`/`assets/`/`internal/cli/`/`cmd/` changes
+- [x] V0–V2 unchanged from Slice A; V3/V4/V5/V6/V9 check functions unchanged from Slice C land
+- [x] Slice B `RecipeHashAtVerify` write semantics unchanged — `report.RecipeHashAtVerify = sha256Hex(recipeBytes)` at `verify.go:258` identical to Slice C land
+- [x] Static-before-dynamic ordering preserved — `anyBlockFailed(report.Checks)` short-circuits at `verify.go:233-238` BEFORE the `runClosureReplay` call (and therefore before any `CreateShadow`)
+- [x] Remediation strings verbatim from PRD §3.1.2 / §4.3.5:
+  - V8 fail: `"post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile <slug>"` — `verify.go:988`
+  - V7 parent-replay fail: `"hard parent <slug> failed to replay in shadow: <err>; re-run tpatch verify <slug> on the parent first"` — `verify.go:1005`
+  - V8 parent-replay skip reason: `"skipped: parent-replay aborted before V8"` — `verify.go:903/917/925/933`, byte-for-byte against PRD `verify-freshness.md:489`
+- [x] Non-obvious change confirmed clean: previous skip reason text `"V7 (recipe_replay_clean) failed: parent-replay"` does not appear anywhere in code or tests (grep across repo returned zero hits) — no dependent caller, no regression
+- [x] Live 2×2 matrix all 5 cells correct (see "Live 2×2 matrix outcome" below)
+- [x] **ABSENT_INVALID regression case green**: VERDICT=`failed`, V8 `passed=False, skipped=False, remediation="post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile demo"` — exact match to the external supervisor's bug repro
+- [x] Shadow not allocated when both absent: ABSENT_ABSENT cell shows `.tpatch/shadow/` directory absent entirely
+- [x] Parent-replay fail-fast still correct — `TestRunVerify_RecipeAbsent_PatchPresent_ParentReplayFailFast` (new, `verify_closure_replay_test.go:379`) asserts `failed_at="parent-replay"`, `parent_slug="stuck-parent"`, V7 verbatim parent-replay remediation, V8 reason `=="skipped: parent-replay aborted before V8"`. The pre-existing `TestRunVerify_ClosureReplay_ParentFailMidClosure_FailFast` only asserts `v8.Skipped` (verify_closure_replay_test.go:166) — implementer's claim that the skip-reason text change carries no regression confirmed
+- [x] V9 D6 source-truth invariant still holds — `TestRunVerify_V9_SourceTruth_DoesNotReadArtifacts` still passes; `runClosureReplay` doesn't touch `Reconcile`/`reconcile-session`/`post-reconcile` (grep on verify.go limited to `checkReconcileOutcomeConsistent`)
+- [x] Slice B amend OR-condition still clears Verify after recipe drift — live test (verify writes `RecipeHashAtVerify=0949463…`; recipe mutated externally; `tpatch amend demo "new desc"`; status.json no longer contains `verify` key) PASSED against the rev1 binary
+- [x] No out-of-scope changes (commit confined to verify.go + verify_closure_replay_test.go + CURRENT.md; untracked exploratory PRDs and `docs/whitepapers/` correctly NOT committed)
+- [x] Handoff accurate — CURRENT.md Status=`Review — revision-1 complete`, Revision-1 block (lines 110–195) cites PRD §5 line 524, documents the four matrix cells, calls out the V8 skip-reason text change, lists the four new tests, captures BEFORE/AFTER from the supervisor's exact repro
+
+### Verdict: APPROVED
+
+### Live 2×2 matrix outcome
+
+Built `tpatch-rev1-bin` from commit 5892ae0 and reproduced all five cells against fresh git repos:
+
+```
+=== ABSENT_ABSENT ===  (recipe absent + patch absent)
+EXIT=0  VERDICT passed
+V7 passed=True  skipped=True  reason='no apply-recipe.json (precondition not met)'
+V8 passed=True  skipped=True  reason='no post-apply.patch (precondition not met)'
+Shadow contents: no .tpatch/shadow/   ← never allocated ✓
+
+=== ABSENT_INVALID ===  (recipe absent + invalid patch — THE BUG REGRESSION CHECK)
+EXIT=2  VERDICT failed
+V7 passed=True  skipped=True   reason='no apply-recipe.json (precondition not met)'
+V8 passed=False skipped=False  remediation='post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile demo'
+Shadow contents: empty (pruned) ✓
+
+=== ABSENT_VALID ===  (recipe absent + valid new-file patch)
+EXIT=0  VERDICT passed
+V7 passed=True  skipped=True   reason='no apply-recipe.json (precondition not met)'
+V8 passed=True  skipped=False  ← V8 ran against closure-replayed baseline ✓
+Shadow contents: empty (pruned) ✓
+
+=== PRESENT_ABSENT ===  (recipe present + patch absent)
+EXIT=0  VERDICT passed
+V7 passed=True  skipped=False
+V8 passed=True  skipped=True   reason='no post-apply.patch (precondition not met)'
+Shadow contents: empty (pruned) ✓
+
+=== PRESENT_VALID ===  (recipe present + valid new-file patch)
+EXIT=0  VERDICT passed
+V7 passed=True  skipped=False
+V8 passed=True  skipped=False
+Shadow contents: empty (pruned) ✓
+```
+
+All five cells match the expected verdict / V7 / V8 / shadow-residue contract from the review prompt. The ABSENT_INVALID cell — the external supervisor's HIGH-finding repro — now reports verdict=`failed` with V8 carrying the verbatim PRD §3.1.2 remediation. BEFORE/AFTER inversion confirmed end-to-end against a fresh binary.
+
+Note on the "valid" patch shape: an empty patch file caused `git apply --check` to reject with a parse error, so the cells substituted a minimal valid new-file diff (`new.txt` with one line). Documented per the prompt's escape clause.
+
+### Notes
+
+- **Non-blocking observation (clean)**: The PRD-line-524 contract requires V7 to be skipped (not failed) when the recipe is absent even if the closure replay had to run for V8's sake. `runClosureReplay` honours this exactly — `v7SkipRecipeAbsent` (verify.go:814-820) is constructed up front and used as the V7 result on the recipe-absent + patch-present + replay-success path (verify.go:957-959). The patch-only path therefore correctly produces `V7=skipped/precondition` and `V8=passed/failed-against-baseline`, never `V7=failed`.
+- **Non-blocking observation (clean)**: The two pre-shadow-allocation early-exit paths (topology error at verify.go:847-856; `HeadCommit` failure at verify.go:861-869) correctly do NOT call `PruneShadow` because no shadow exists yet. The `defer` is registered only after a successful `CreateShadow` (verify.go:883). No leak window.
+- **Non-blocking observation (clean)**: `parentReplayFail` (verify.go:1000-1007) emits the same remediation text on every parent-replay exit branch, and `skipV8Because("skipped: parent-replay aborted before V8")` is used uniformly across all four parent-fail switch arms (load-status err, recipe-load err, replay err, default-state arm). Consistent and PRD-aligned.
+- **Test coverage delta**: revision-1 adds four targeted tests in `verify_closure_replay_test.go` — the recipe×patch matrix plus the parent-replay fail-fast under recipe-absent. The bug-repro regression test (`TestRunVerify_RecipeAbsent_PatchPresent_V8FailsOnInvalidPatch`) asserts the verbatim PRD §3.1.2 V8 remediation byte-for-byte; this is the test that would have caught the original bug and will now prevent any silent regression.
+- **Test count drift acknowledged**: handoff claims 49 `TestRunVerify_*` tests; live `go test -v -run TestRunVerify` enumeration matches that count. Total package tests across the repo all green.
+
+### Action Taken
+
+Verdict logged for supervisor disposition. Recommend supervisor archive Slice C (now incorporating revision-1) to `docs/handoff/HISTORY.md`, flip the Slice C row in `docs/ROADMAP.md` to ✅, and dispatch the external supervisor for the final external-tier review of `5892ae0` before staging Slice D.
+
+---
+
+## Review — M15-W3-SLICE-C — 2026-04-28
+
+**Reviewer**: m15-w3-slice-c-reviewer (sub-agent)
+**Task**: Slice C — V3–V9 real implementations + hard-parent closure replay
+**Commit reviewed**: 32f50c8
+
+### Checklist
+- [x] Compiles (`go build ./cmd/tpatch` clean)
+- [x] Tests pass (`go test ./... -count=1` all packages green; 45 `TestRunVerify_*` all pass; total internal/workflow ~7s)
+- [x] gofmt clean (`gofmt -l .` empty)
+- [x] go vet clean (`go vet ./...` empty)
+- [x] D1–D7 invariants honoured (D6 V9 reads only `status.Reconcile.Outcome` — verified by source inspection of `checkReconcileOutcomeConsistent` (verify.go:749-774); D7 single `defer gitutil.PruneShadow` at verify.go:863-867 guards every return path)
+- [x] Closure-replay primitive private to verify.go (grep confirmed `runClosureReplay` / `replayOpInShadow` / `replayRecipeOpsInShadow` referenced only inside `internal/workflow/verify.go`; no external callers)
+- [x] Single shadow per run (single `gitutil.CreateShadow` invocation at verify.go:851; V7 and V8 share the returned `shadowPath`)
+- [x] Remediation strings verbatim from PRD §3.1.2 (V3, V4, V5, V6, V7 op-fail, V7 parent-replay, V8, V9 — all match byte-for-byte against the templates)
+- [x] Live closure-replay repro green (3-deep DAG happy path: `tpatch verify c --json` against a real temp git repo with A→B→C hard chain reported V7 passed, V0–V6+V9 healthy; V8 was the only fail and only because the fixture's hand-crafted post-apply.patch double-creates `src/c.txt` already written by the recipe — V7's closure replay of A then B then C ops in the shadow worked correctly)
+- [x] Live parent-fail-fast repro correct (forced parent `b` to `analyzed`; verify reported `failed_at: "parent-replay"`, `parent_slug: "b"`, V7 remediation = `"hard parent b failed to replay in shadow: parent state is \"analyzed\" (need applied or upstream_merged); re-run tpatch verify b on the parent first"` — verbatim match to PRD §3.1.2 V7 parent-replay template; V8 skipped; shadow dir empty after exit)
+- [x] V9 adversarial poisoned-files test passes legitimately (test plants malformed JSON at `artifacts/reconcile-session.json` AND `artifacts/post-reconcile.json` and asserts V9 still passes for `outcome=reapplied` — would fail loudly if V9 ever opened either file)
+- [x] Handoff accurate (CURRENT.md Status=Review, Files Changed list matches `git show --stat`, Test Results reflect actual run, non-obvious decisions documented)
+- [x] No out-of-scope changes (`git show 32f50c8 --stat` lists only the five expected files: `docs/handoff/CURRENT.md`, `internal/workflow/verify.go`, `internal/workflow/verify_closure_replay_test.go`, `internal/workflow/verify_slice_c_test.go`, `internal/workflow/verify_test.go`. No `assets/`, `internal/cli/`, `cmd/`, `go.mod`, `go.sum` changes. Untracked exploratory PRDs / `docs/whitepapers/` were correctly NOT committed.)
+
+### Verdict: APPROVED WITH NOTES
+
+### Notes
+
+Code review against ADR-013 + ADR-010 + PRD §3 was clean. Concrete observations:
+
+1. **V0–V2 unchanged.** `git show 32f50c8` deletions are limited to the
+   former `stubRecipeOpTargetsResolve` / `stubV3toV9` helpers; V0/V1/V2
+   production paths (`checkIntentFilesPresent`, `checkRecipeParses`,
+   `RunVerify`'s V0 status-load and lifecycle-state refusal) were not
+   touched. `TestRunVerify_SliceA_V0V1V2_StillRealAndPassing` plus the
+   pre-existing Slice A truth-table tests all stay green.
+
+2. **`RecipeHashAtVerify` write semantics preserved.** verify.go:253
+   computes the hash from raw `recipeBytes` exactly as in Slice B; Slice
+   B's amend-invalidation byte-identity contract is intact.
+
+3. **`replayOpInShadow` (verify.go:1034) is sound.** It bypasses
+   `ExecuteRecipe` (and therefore the M14 apply-time `created_by` gate)
+   intentionally — the shadow has no `.tpatch/` of its own, so the gate
+   would crash. The function preserves the other apply-time
+   invariants that matter for V7: `safety.EnsureSafeRepoPath` is called
+   on every op (verify.go:1036) and all four op kinds (write-file,
+   replace-in-file, append-file, ensure-directory) are dispatched
+   directly with the same semantics as the live executor. V3's static
+   `created_by` check guarantees the gate's pre-condition is enforced
+   before the dynamic phase runs.
+
+4. **`setupVerifyFeature` git init is necessary and harmless.** V5
+   needs `gitutil.IsAncestor` and V7 needs `gitutil.CreateShadow`, both
+   of which require a git repo. No previous test depended on the
+   absence of git init; the existing Slice A tests still pass with the
+   new fixture.
+
+5. **D6 source-truth.** `checkReconcileOutcomeConsistent` (verify.go:749)
+   reads only `status.Reconcile.Outcome`; no `os.Open`, no
+   `s.ReadFeatureFile`, no path traversal. The poisoned-files test
+   (verify_slice_c_test.go:422) plants malformed JSON at the two
+   plausibly-readable artifact paths and would propagate the parse
+   error if V9 ever consumed them.
+
+6. **D7 read-only / shadow lifecycle.** Single `defer` at verify.go:863
+   guards every closure-replay return path. The happy-path live repro
+   confirmed `.tpatch/shadow/` was empty after exit, and the fail-fast
+   live repro confirmed the same after the parent-replay abort.
+
+7. **Closure-replay primitive scope.** `runClosureReplay`,
+   `replayRecipeOpsInShadow`, `replayOpInShadow`, `loadParentRecipe`,
+   `filterHardDeps`, `depSlugsHard`, `parentReplayFail`, `skipV8Because`
+   are all private (lowercase) and grep-only-referenced from inside
+   `verify.go`. ADR-010 D2 + ADR-013 §3.4.3 are honoured.
+
+8. **Single shadow allocation per run.** Exactly one
+   `gitutil.CreateShadow(s.Root, slug, head)` call (verify.go:851);
+   V7 and V8 both use the returned `shadowPath`.
+
+9. **Static-before-dynamic.** `anyBlockFailed` (verify.go:534) is
+   consulted at verify.go:233 before the closure-replay phase; if any
+   block-severity static check failed, V7+V8 short-circuit to
+   skipped without allocating a shadow.
+
+10. **V6 is warn, gated on `Config.DAGEnabled()`** (verify.go:685–740).
+
+Non-blocking minor observations:
+
+- **`PrunesShadowOnExit` only drives the pass path explicitly.** The
+  fail-fast test (`ParentFailMidClosure_FailFast`) does not also assert
+  shadow absence after exit. Structurally the single deferred
+  `PruneShadow` guarantees both branches, and the live fail-fast repro
+  confirmed `.tpatch/shadow/` was empty after the abort, but a future
+  cycle could add an explicit assertion in the fail-fast test for
+  belt-and-braces. Not blocking — the defer is unconditional.
+
+- **V3 remediation literal `<parent>` placeholder.** When V3 fires for
+  a missing path with `created_by` empty, the remediation contains the
+  literal string `"declare created_by=<parent> or apply <parent>"`. The
+  PRD §3.1.2 V3 template uses `<parent>` placeholder text, and there is
+  genuinely no parent slug to substitute (the op has `created_by=""`),
+  so this is faithful to the template. PRD's worked example at line 453
+  shows a substituted slug because that scenario knows the intended
+  parent from context. Acceptable; could be improved with a
+  best-effort hint listing the slug's hard parents, but that is outside
+  the verbatim contract.
+
+- **V8 on parent-replay abort uses `Skipped: true, Passed: true`**
+  (`skipV8Because`, verify.go:975). The PRD §3.4.5 example fragment at
+  line 488–489 renders the same condition with `passed: false` and a
+  `"skipped: …"` remediation. The implementation follows the reviewer
+  prompt's explicit guidance ("V8 marked `skip` (not fail) on parent-
+  replay abort") and the formal `Skipped` field. Verdict is unaffected
+  either way (V7 already failed-block flips it to `failed`).
+
+### Live reproduction outcome
+
+3-deep DAG happy path (A→B→C, all `applied`, hard deps):
+
+```
+verdict: failed exit_code: 2     # V8 fail is fixture artifact, not a bug
+failed_at:  parent_slug:
+  status_loaded block-abort passed=True
+  intent_files_present block passed=True
+  recipe_parses block passed=True
+  recipe_op_targets_resolve block passed=True
+  dep_metadata_valid block passed=True
+  satisfied_by_reachable block passed=True skipped=True
+  dependency_gate_satisfied warn passed=True
+  recipe_replay_clean block passed=True             ← V7 closure replay green
+  post_apply_patch_replay_clean block passed=False  ← my hand-rolled patch double-creates src/c.txt vs. recipe write-file
+  reconcile_outcome_consistent warn passed=True skipped=True
+shadow dir after happy run: (no .tpatch/shadow/ entry)
+```
+
+Parent-fail-fast (force `b.state=analyzed`):
+
+```
+verdict: failed exit_code: 2
+failed_at: parent-replay parent_slug: b
+  recipe_replay_clean passed=False  ->
+    hard parent b failed to replay in shadow: parent state is "analyzed"
+    (need applied or upstream_merged); re-run tpatch verify b on the
+    parent first
+  post_apply_patch_replay_clean passed=True skipped=True
+    reason: V7 (recipe_replay_clean) failed: parent-replay
+shadow dir after fail-fast: (none)
+```
+
+Both reproductions match PRD §3.4.3 + §3.1.2 exactly.
+
+### Action Taken
+
+Verdict logged for supervisor disposition. No code modified. No push
+performed. CURRENT.md left untouched (implementer-owned).
+
+
 ## External Supervisor Re-review #2 — M15-W3-SLICE-B-REVISION-1 — 2026-04-28
 
 **Reviewer**: external supervisor (user-driven)
