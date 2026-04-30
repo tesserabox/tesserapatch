@@ -426,6 +426,53 @@ func TestRunVerify_RecipeAbsent_PatchPresent_ParentReplayFailFast(t *testing.T) 
 	assertNoShadowFor(t, s, slug)
 }
 
+// TestRunVerify_PatchZeroByte_TreatedAsPresent_V8Fails is the
+// regression test for the Slice C revision-1 HIGH finding: a
+// zero-byte post-apply.patch must be treated as PRESENT (PRD
+// §3.1.2 V8 row keys off file presence; §5 line 525 says "absent"
+// means missing file). Before the fix, the precondition probe
+// also required `fi.Size() > 0`, so a zero-byte patch was skipped
+// with verdict=passed — a false pass on a malformed artifact.
+// After the fix, V8 runs `git apply --check` against the
+// closure-replayed baseline, fails (git rejects empty patch), and
+// the report carries the verbatim §3.1.2 remediation.
+func TestRunVerify_PatchZeroByte_TreatedAsPresent_V8Fails(t *testing.T) {
+	slug := "rev2-zerobyte"
+	s := setupVerifyFeature(t, slug)
+	writeIntent(t, s, slug)
+	if err := s.WriteArtifact(slug, "post-apply.patch", ""); err != nil {
+		t.Fatalf("write zero-byte patch: %v", err)
+	}
+
+	report, err := RunVerify(s, slug, VerifyOptions{NoWrite: true})
+	if err != nil {
+		t.Fatalf("RunVerify: %v", err)
+	}
+
+	v7 := findCheck(t, report, CheckRecipeReplayClean)
+	if !v7.Passed || !v7.Skipped {
+		t.Errorf("V7 must be skipped (recipe absent); got %+v", v7)
+	}
+	if v7.Reason != "no apply-recipe.json (precondition not met)" {
+		t.Errorf("V7 reason mismatch; got %q", v7.Reason)
+	}
+	v8 := findCheck(t, report, CheckPostApplyPatchReplayClean)
+	if v8.Skipped {
+		t.Fatalf("V8 must NOT be skipped on zero-byte patch (presence == file exists); got %+v", v8)
+	}
+	if v8.Passed {
+		t.Fatalf("V8 must FAIL on zero-byte patch; got %+v", v8)
+	}
+	wantRem := "post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile " + slug
+	if v8.Remediation != wantRem {
+		t.Errorf("V8 remediation must be PRD §3.1.2 verbatim\n want: %q\n  got: %q", wantRem, v8.Remediation)
+	}
+	if report.Verdict != "failed" {
+		t.Errorf("verdict must be failed; got %q", report.Verdict)
+	}
+	assertNoShadowFor(t, s, slug)
+}
+
 // assertNoShadowFor fails the test if any shadow directory for slug
 // still exists under .tpatch/shadow/.
 func assertNoShadowFor(t *testing.T, s *store.Store, slug string) {

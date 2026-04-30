@@ -7,7 +7,7 @@
 - **Description**: Slice C — V3–V9 real implementations including
   hard-parent topological closure replay (V7/V8). Replaces the V3–V9
   stubs shipped in Slice A.
-- **Status**: Review — revision-1 complete (HIGH finding fixed), awaiting reviewer.
+- **Status**: Review — revision-2 complete, awaiting reviewer.
 - **Assigned**: 2026-04-28
 
 ## Scope (per PRD-verify-freshness.md §9 Slice C)
@@ -107,6 +107,71 @@ go test ./...                    # all packages green
 go build ./cmd/tpatch            # clean
 ```
 
+## Slice C revision-2 (HIGH finding fix)
+
+External supervisor reviewed Slice C revision-1 @ `5892ae0` and
+returned NEEDS REVISION on a single HIGH finding: the `patchPresent`
+probe in `verify.go:241-244` keyed off `fi.Size() > 0` in addition to
+file presence. PRD-verify-freshness §3.1.2 V8 row defines the V8
+precondition as **`artifacts/post-apply.patch` present** (file
+exists), and §5 line 525's "post-apply.patch absent | V8 is skipped"
+means the file is missing — not zero-byte.
+
+Live repro on revision-1: `applied` feature, no `apply-recipe.json`,
+zero-byte `artifacts/post-apply.patch` → `verdict=passed` with V8
+skipped (`reason="no post-apply.patch (precondition not met)"`).
+False pass on a malformed patch artifact.
+
+### What changed
+
+- `internal/workflow/verify.go` — **one logical line removed** from
+  the patchPresent probe (`verify.go:242`). Probe now reads:
+  ```go
+  if fi, statErr := os.Stat(patchPath); statErr == nil && !fi.IsDir() {
+  ```
+  Zero-byte patches are now treated as present. Downstream
+  `runClosureReplay` and `git apply --check` already handle the
+  zero-byte case correctly: `git apply --check` exits 128 with
+  `"No valid patches in input"`, and V8's existing error path
+  emits the verbatim §3.1.2 remediation.
+- `internal/workflow/verify_closure_replay_test.go` — added
+  `TestRunVerify_PatchZeroByte_TreatedAsPresent_V8Fails`. Builds an
+  `applied` feature with no recipe and a zero-byte
+  `post-apply.patch`. Asserts V7 skipped (recipe absent), V8 fails
+  with verbatim §3.1.2 remediation, verdict=failed, shadow pruned.
+
+### Invariants preserved
+
+- ADR-013 D7 — `defer PruneShadow` unchanged.
+- Single `CreateShadow` per verify run unchanged.
+- ADR-010 D2 — closure-replay primitive stays private.
+- ADR-013 D6 — V9 source-truth unchanged.
+- Slice B `RecipeHashAtVerify` semantics unchanged.
+- V0–V6 + V9 logic unchanged.
+- Static-before-dynamic ordering unchanged.
+- V6 warn severity gated on `Config.DAGEnabled()` unchanged.
+- All remediation strings verbatim.
+- All revision-1 tests still pass unchanged.
+
+### Live repro proof
+
+BEFORE (rev1 `5892ae0`, zero-byte patch, no recipe):
+
+```
+VERDICT passed
+V8 passed=True skipped=True reason='no post-apply.patch (precondition not met)'
+```
+
+AFTER (rev2, same repro):
+
+```
+VERDICT failed
+V7 passed=True skipped=True reason='no apply-recipe.json (precondition not met)'
+V8 passed=False skipped=False remediation='post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile demo'
+```
+
+Shadow dir empty after run.
+
 ## Slice C revision-1 (HIGH finding fix)
 
 External supervisor reviewed Slice C @ `32f50c8` and returned NEEDS
@@ -196,6 +261,17 @@ V8 passed=False skipped=False remediation=post-apply.patch no longer applies to 
 
 ## Files Changed
 
+**Revision-2 delta** (on top of revision-1):
+
+- `internal/workflow/verify.go` — one logical line removed from
+  the `patchPresent` probe (the `&& fi.Size() > 0` clause). No
+  other production change.
+- `internal/workflow/verify_closure_replay_test.go` — added
+  `TestRunVerify_PatchZeroByte_TreatedAsPresent_V8Fails`
+  regression test.
+
+**Revision-1 + original Slice C files** (unchanged in revision-2):
+
 - `internal/workflow/verify.go` — V3–V9 stubs replaced with real
   implementations + hard-parent closure-replay primitive
   (`runClosureReplay`, `replayRecipeOpsInShadow`,
@@ -227,6 +303,18 @@ V8 passed=False skipped=False remediation=post-apply.patch no longer applies to 
   (pins ADR-013 D7 — shadow always pruned).
 
 ## Test Results
+
+- `gofmt -l .` → clean.
+- `go vet ./...` → clean.
+- `go build ./cmd/tpatch` → clean.
+- `go test ./... -count=1` → all packages green. Total `=== RUN`
+  count: **453** (was 452 at revision-1 land — +1 for the new
+  zero-byte regression test).
+- Live supervisor repro (recipe absent + zero-byte patch) now
+  reports verdict=failed, V8 fail with verbatim PRD §3.1.2
+  remediation. Shadow dir empty after run.
+
+## Test Results (revision-1, kept for context)
 
 - `gofmt -l .` → clean.
 - `go vet ./...` → clean.

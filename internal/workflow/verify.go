@@ -239,7 +239,7 @@ func RunVerify(s *store.Store, slug string, opts VerifyOptions) (*VerifyReport, 
 	} else {
 		patchPath := filepath.Join(s.Root, ".tpatch", "features", slug, "artifacts", "post-apply.patch")
 		patchPresent := false
-		if fi, statErr := os.Stat(patchPath); statErr == nil && !fi.IsDir() && fi.Size() > 0 {
+		if fi, statErr := os.Stat(patchPath); statErr == nil && !fi.IsDir() {
 			patchPresent = true
 		}
 		cr := runClosureReplay(s, slug, status, recipe, recipePresent, patchPresent)
