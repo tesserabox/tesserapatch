@@ -1,3 +1,19 @@
+# 2026-04-29 — M15-W3-SLICE-C — APPROVED, shipped to origin/main
+
+**Outcome**: Slice C (V3–V9 real verify implementations + hard-parent topological closure replay for V7/V8) shipped across three commits. The original (`32f50c8`) was approved by the sub-agent reviewer with all live closure-replay reproductions green, but flagged HIGH by the external supervisor: `runClosureReplay` short-circuited BOTH V7 and V8 when `apply-recipe.json` was absent, contradicting PRD-verify-freshness.md edge-case table line 524 ("Recipe absent | V2/V3/V7 are skipped; V8 runs against the closure-replayed baseline if patch is present"). The supervisor reproduced the false pass with a fresh binary: applied feature, no recipe, invalid post-apply.patch → `verdict=passed`, V8 skipped with the recipe-precondition reason.
+
+Revision-1 (`5892ae0`) restructured `runClosureReplay` so the shadow allocation is gated on `recipePresent || patchPresent` and the function explicitly handles all four cells of `recipe × patch ∈ {present, absent}²`. Sub-agent ran the full 2×2 matrix live; external supervisor confirmed the original repro fixed but caught a NEW HIGH: `verify.go:242` gated `patchPresent` on `fi.Size() > 0`, treating zero-byte `post-apply.patch` as absent. PRD §3.1.2 keys V8 off file presence not non-empty content. Live repro on the rev1 binary: applied feature, no recipe, zero-byte patch → `verdict=passed`, V8 skipped. Confirmed `git apply --check empty.patch` returns exit 128.
+
+Revision-2 (`23af23e`) was a literal one-line fix: dropped `&& fi.Size() > 0` from the patchPresent probe. Sub-agent re-ran the full rev1 matrix plus the zero-byte case against the rev2 binary — all five cells correct, no regressions. External supervisor APPROVED on the second pass: zero-byte case now produces `verdict=failed` with V8 carrying verbatim §3.1.2 remediation `"post-apply.patch no longer applies to closure-replayed baseline; run tpatch reconcile demo"`, shadow pruned. Adjacent zero-byte recipe probe failed closed through V2 parse failure (no new false-pass path opened). All Slice A V0–V2, Slice B `RecipeHashAtVerify` byte semantics + amend OR-condition, and Slice C V3/V4/V5/V6/V9 contracts intact.
+
+Final push to origin/main on `08ed4e5`: stack is `4945093` → `32f50c8` → `5892ae0` → `23af23e` → `08ed4e5` (tracking).
+
+Slice C is now ✅ in `docs/ROADMAP.md`. Slice D (`tpatch verify --all` + 6-skill rollout + parity-guard anchors + `docs/dependencies.md` cross-link + CHANGELOG v0.6.2) is the next active task.
+
+**Process lesson reinforced** (cycle now 5 deep on Slice C/rev1/rev2): artifact-presence gates need a malformed-but-present repro in the standard reviewer matrix. Sub-agent reviewers caught the closure-replay topology and the four advertised matrix cells, but adjacent edges like zero-byte artifacts and other false-positive size/content gates only surfaced under external stress. Slice D reviewer prompts should explicitly require a malformed-artifact case for any new precondition probe.
+
+---
+
 # 2026-04-28 — M15-W3-SLICE-B — APPROVED, shipped to origin/main
 
 **Outcome**: Slice B (freshness derivation + label integration + amend invalidation) landed across two commits. The original (`a07acc7`) was approved by the sub-agent reviewer but flagged HIGH by the external supervisor: the recipe-touching amend invalidation contract (ADR-013 D3) was effectively dead at the CLI level because the pre/post bytes compare in `c1.go` could never trigger (no amend code path rewrites `apply-recipe.json`).
