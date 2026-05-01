@@ -111,5 +111,96 @@ None.
 ## Context for Next Agent
 
 - Sub-agent reviewer prior-misses pattern is now 4 cycles deep: Slice A reviewer-1, Slice B reviewer-1, bug-fix reviewer (APPROVED WITH NOTES), Slice C reviewer-1. Slice C rev-1 + rev-2 reviewers broke the streak by following strict matrix instructions. Slice D reviewer prompts should keep the matrix-coverage discipline.
-- The `tpatch` binary at repo root is an untracked development artifact — do NOT add it.
+- The `tpatch` binary at repo root is now `.gitignore`d (added 2026-05-01 alongside the smart-routing work) — do NOT add it.
 - `4945093` was already pushed before Slice C work; the Slice C stack itself is `32f50c8` → `5892ae0` → `23af23e` → `08ed4e5`.
+
+## Side Work — 2026-05-01 — Smart Endpoint Routing for the copilot-api Proxy
+
+Out-of-band fix dispatched in the same session as the Slice D queue. The
+user reported `"This operation was aborted"` 500s when running
+`tpatch provider set --preset copilot --model claude-opus-4.6` (and
+gpt-5.5). Root cause split: the proxy's
+`routes/chat-completions/handler.ts` is missing the `/v1/messages`
+dispatch branch (proxy-side bug, owners notified separately) AND
+tpatch was hitting `/v1/chat/completions` for Claude regardless of
+what the proxy advertised on `/v1/models`.
+
+### What landed
+
+- `internal/provider/router.go` (NEW) — `PickProvider(cfg, *Health)`
+  selects Anthropic/Responses/OpenAICompatible based on the model's
+  `supported_endpoints`. Scoped to the copilot-api proxy via
+  `IsCopilotProxyEndpoint`.
+- `internal/provider/responses.go` (NEW) — `ResponsesProvider` for the
+  OpenAI Responses API, gated behind
+  `TPATCH_ENABLE_RESPONSES_PROVIDER=1` (off by default; flip when the
+  upstream proxy fix lands).
+- `internal/provider/errors.go` (NEW) — `ProxyUpstreamAbortedError`
+  typed error + `IsProxyUpstreamAborted` + `detectProxyAbort` helper.
+  Replaces the cryptic "generation returned 500" with a multi-line
+  remediation message.
+- `internal/provider/provider.go` — `Health` extended with
+  `ModelInfo []ModelInfo`; `OpenAICompatible.Check` parses
+  `supported_endpoints`. `Generate` calls `detectProxyAbort` on 500.
+- `internal/provider/anthropic.go` — empty-token check relaxed to
+  `token == "" && !IsCopilotProxyEndpoint(cfg)` in both `Check` and
+  `Generate`; the proxy strips inbound `x-api-key`.
+- `internal/provider/probe.go` — `Probe()` returns `(*Health, error)`;
+  `Reachable` kept as thin wrapper. `IsCopilotProxyEndpoint` broadened
+  to accept both `openai-compatible` and `anthropic` Types when URL
+  contains `:4141`. Added `setForceCopilotProxy` test hook.
+- `internal/cli/cobra.go` — `probedEndpoints` cache changed to
+  `map[string]probedResult{health, err}`; `loadAndProbeProvider`
+  routes through `PickProvider`. Dropped `AuthEnv: "GITHUB_TOKEN"`
+  from the `copilot` preset (proxy strips/replaces auth headers).
+- `internal/cli/copilot.go` — `ensureProviderReachable` returns
+  `(*Health, error)` so the cache can hold the parsed metadata.
+- `.gitignore` — added `/tpatch` rule (anchored to repo root so it
+  doesn't shadow `cmd/tpatch/`).
+- `docs/adrs/ADR-014-smart-endpoint-routing.md` (NEW) + index entry.
+- `docs/harnesses/copilot.md` — replaced the `--auth-env GITHUB_TOKEN`
+  example, documented smart routing + the `/responses`-only limitation
+  and the `TPATCH_ENABLE_RESPONSES_PROVIDER` opt-in.
+
+### Tests added
+
+- `router_test.go` — 9-case `PickProvider` matrix (Claude/GPT-5.x/GPT-4o,
+  on-proxy/off-proxy, nil health, missing model, anthropic-type on
+  proxy, responses gate on/off).
+- `errors_test.go` — `detectProxyAbort` matrix + `IsProxyUpstreamAborted`
+  wrapping tests.
+- `responses_test.go` — gate, success path, abort detection, Check.
+- `anthropic_test.go` — added `TestAnthropicProxyEmptyTokenIntegration`
+  + `TestAnthropicProxyAbortDetected` (use `setForceCopilotProxy`
+  hook so they don't bind the privileged :4141 port).
+- `provider_test.go` — `TestCheckParsesSupportedEndpoints` +
+  `TestCheckMissingSupportedEndpoints`.
+- `phase2_test.go` — `TestCopilotPresetNoAuthEnv` pins the dropped
+  `GITHUB_TOKEN`.
+- `probe_test.go` — extended `TestIsCopilotProxyEndpoint` for the
+  broadened type predicate.
+
+### Validation
+
+- `go build ./...` clean.
+- `gofmt -l .` clean.
+- `go vet ./...` clean.
+- `go test ./...` all packages pass (cli 23s, provider 13s, workflow 43s).
+
+### Status of the gpt-5.5 case
+
+`/responses`-only models still surface
+`ProxyUpstreamAbortedError` until the upstream proxy team's fix lands.
+`ResponsesProvider` is wired but gated; flipping the env var without
+the upstream fix will not help. This is documented in
+`docs/harnesses/copilot.md` and ADR-014 §"Out of scope".
+
+### Out-of-band — does NOT block Slice D
+
+Slice D queued work above is unaffected. The smart-routing changes
+touch `internal/provider/`, `internal/cli/cobra.go` /
+`internal/cli/copilot.go`, `.gitignore`, and docs only. Slice D's
+edit set is `internal/workflow/verify.go` (additive),
+`internal/cli/verify.go` (additive), `assets/skills/*`,
+`assets/assets_test.go`, `docs/dependencies.md`, `CHANGELOG.md` — no
+overlap.

@@ -201,6 +201,29 @@ func TestProviderSetPreset(t *testing.T) {
 	}
 }
 
+// TestCopilotPresetNoAuthEnv pins the contract that `--preset copilot`
+// produces a config with no auth_env. The local copilot-api proxy
+// strips and replaces inbound auth headers with its own session token
+// (lib/api-config.ts:copilotHeaders), so requiring users to set
+// GITHUB_TOKEN was theatre that polluted the proxy logs without
+// affecting upstream behaviour.
+func TestCopilotPresetNoAuthEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	runCmd("init", "--path", tmpDir)
+
+	if _, _, code := runCmd("provider", "set", "--path", tmpDir, "--repo", "--preset", "copilot"); code != 0 {
+		t.Fatalf("provider set --preset copilot failed")
+	}
+	out, _, _ := runCmd("config", "show", "--path", tmpDir)
+	if !strings.Contains(out, "localhost:4141") {
+		t.Errorf("expected localhost:4141 base URL, got:\n%s", out)
+	}
+	// auth_env should be empty or absent — never GITHUB_TOKEN.
+	if strings.Contains(out, "GITHUB_TOKEN") {
+		t.Errorf("copilot preset should not set GITHUB_TOKEN auth_env, got:\n%s", out)
+	}
+}
+
 // TestProviderSetGlobalDefault is the regression for bug-provider-set-global.
 // Previously, `tpatch provider set --preset X` outside a repo failed with
 // "could not find .tpatch". Provider config is user-level (same Copilot

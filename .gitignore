@@ -29,6 +29,10 @@ go.work.sum
 # binary output into /bin/ instead. See 2026-04-17 incident.
 /bin/
 
+# Root-level binary produced by `go build ./cmd/tpatch` (no -o flag).
+# Anchored to repo root (leading slash) so it never matches `cmd/tpatch/`.
+/tpatch
+
 # Test repo clones (large, reproducible from upstream)
 tests/copilot-api*/
 

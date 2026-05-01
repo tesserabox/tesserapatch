@@ -1568,10 +1568,18 @@ func providerSetCmd() *cobra.Command {
 // Each preset matches a widely used endpoint that speaks either the
 // OpenAI chat completions API or the Anthropic Messages API — the two
 // protocols implemented in internal/provider.
+//
+// Note: the `copilot` preset intentionally leaves AuthEnv empty. The
+// local copilot-api proxy (localhost:4141) strips and replaces inbound
+// auth headers with its own session token (see ADR-NNN / proxy
+// `lib/api-config.ts:copilotHeaders`), so the user's GITHUB_TOKEN is
+// never forwarded upstream and tpatch sending it just clutters the
+// proxy's request log. Users can still opt in via
+// `--auth-env GITHUB_TOKEN`.
 var providerPresets = map[string]struct {
 	Type, BaseURL, Model, AuthEnv string
 }{
-	"copilot":        {"openai-compatible", "http://localhost:4141", "claude-sonnet-4", "GITHUB_TOKEN"},
+	"copilot":        {"openai-compatible", "http://localhost:4141", "claude-sonnet-4", ""},
 	"copilot-native": {provider.CopilotNativeType, "", "claude-sonnet-4", ""},
 	"openai":         {"openai-compatible", "https://api.openai.com", "gpt-4o", "OPENAI_API_KEY"},
 	"openrouter":     {"openai-compatible", "https://openrouter.ai/api", "anthropic/claude-sonnet-4", "OPENROUTER_API_KEY"},
@@ -1735,8 +1743,15 @@ func openStoreFromCmd(cmd *cobra.Command) (*store.Store, error) {
 
 // probedEndpoints tracks base URLs already probed this process so the
 // reachability check only runs once per run, not per workflow phase.
+// Stores both the probe error and the resolved health so PickProvider
+// can use the cached metadata across phases.
+type probedResult struct {
+	health *provider.Health
+	err    error
+}
+
 var (
-	probedEndpoints   = map[string]error{}
+	probedEndpoints   = map[string]probedResult{}
 	probedEndpointsMu sync.Mutex
 )
 
@@ -1763,6 +1778,13 @@ func loadProviderFromStore(s *store.Store) (provider.Provider, provider.Config) 
 // this to hard-fail with an install hint when a local proxy is expected
 // but not running. Returns (nil, cfg, nil) if the provider is not
 // configured (heuristic fallback path is preserved).
+//
+// When probing succeeds and the cached *provider.Health carries
+// per-model `supported_endpoints` (currently the copilot-api proxy at
+// localhost:4141), the returned Provider is selected via
+// provider.PickProvider — so e.g. Claude models on the proxy
+// transparently use the Anthropic /v1/messages provider, dodging the
+// proxy's missing chat-completions->messages routing branch.
 func loadAndProbeProvider(ctx context.Context, s *store.Store) (provider.Provider, provider.Config, error) {
 	prov, cfg := loadProviderFromStore(s)
 	if prov == nil || !provider.IsLocalEndpoint(cfg) || os.Getenv("TPATCH_NO_PROBE") != "" {
@@ -1771,16 +1793,17 @@ func loadAndProbeProvider(ctx context.Context, s *store.Store) (provider.Provide
 	probedEndpointsMu.Lock()
 	cached, seen := probedEndpoints[cfg.BaseURL]
 	probedEndpointsMu.Unlock()
-	if seen {
-		return prov, cfg, cached
+	if !seen {
+		health, err := ensureProviderReachable(ctx, cfg)
+		cached = probedResult{health: health, err: err}
+		probedEndpointsMu.Lock()
+		probedEndpoints[cfg.BaseURL] = cached
+		probedEndpointsMu.Unlock()
 	}
-	probeErr := ensureProviderReachable(ctx, cfg)
-	probedEndpointsMu.Lock()
-	probedEndpoints[cfg.BaseURL] = probeErr
-	probedEndpointsMu.Unlock()
-	if probeErr != nil {
-		return nil, cfg, probeErr
+	if cached.err != nil {
+		return nil, cfg, cached.err
 	}
+	prov = provider.PickProvider(cfg, cached.health)
 	return prov, cfg, nil
 }
 

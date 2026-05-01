@@ -11,6 +11,9 @@
 - [ADR-005: M11 Native Copilot Provider](ADR-005-m11-native-copilot-provider.md) — Accepted
 - [ADR-010: Provider-Assisted Conflict Resolver](ADR-010-provider-conflict-resolver.md) — Accepted
 - [ADR-011: Feature Dependency DAG](ADR-011-feature-dependencies.md) — Accepted
+- [ADR-012: Feature Tested State](ADR-012-feature-tested-state.md) — Superseded by ADR-013
+- [ADR-013: Verify Freshness Overlay](ADR-013-verify-freshness-overlay.md) — Accepted
+- [ADR-014: Smart Endpoint Routing for the copilot-api Proxy](ADR-014-smart-endpoint-routing.md) — Accepted
 
 ## Locked-In Decisions (from review process)
 

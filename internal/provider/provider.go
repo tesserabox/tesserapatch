@@ -17,6 +17,22 @@ import (
 type Health struct {
 	Endpoint string   `json:"endpoint"`
 	Models   []string `json:"models"`
+
+	// ModelInfo carries richer per-model metadata when the upstream
+	// /v1/models response includes it (notably supported_endpoints,
+	// used by PickProvider to route Claude/GPT-5.x to the right
+	// endpoint on the copilot-api proxy). Optional — providers that
+	// can't enumerate models (e.g. AnthropicProvider) leave it nil.
+	ModelInfo []ModelInfo `json:"model_info,omitempty"`
+}
+
+// ModelInfo describes a single model exposed by a provider, including
+// any endpoint metadata advertised on /v1/models. Currently consumed
+// by the copilot-api smart-routing path; other call sites should
+// continue to read Models for the legacy ID-only view.
+type ModelInfo struct {
+	ID                 string   `json:"id"`
+	SupportedEndpoints []string `json:"supported_endpoints,omitempty"`
 }
 
 // GenerateRequest is a request to generate text.
@@ -99,7 +115,8 @@ func (p *OpenAICompatible) Check(ctx context.Context, cfg Config) (*Health, erro
 
 	var result struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID                 string   `json:"id"`
+			SupportedEndpoints []string `json:"supported_endpoints,omitempty"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -107,11 +124,13 @@ func (p *OpenAICompatible) Check(ctx context.Context, cfg Config) (*Health, erro
 	}
 
 	models := make([]string, len(result.Data))
+	infos := make([]ModelInfo, len(result.Data))
 	for i, m := range result.Data {
 		models[i] = m.ID
+		infos[i] = ModelInfo{ID: m.ID, SupportedEndpoints: m.SupportedEndpoints}
 	}
 
-	return &Health{Endpoint: cfg.BaseURL, Models: models}, nil
+	return &Health{Endpoint: cfg.BaseURL, Models: models, ModelInfo: infos}, nil
 }
 
 // Generate sends a chat completion request and returns the response text.
@@ -161,6 +180,9 @@ func (p *OpenAICompatible) Generate(ctx context.Context, cfg Config, req Generat
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+		if pe := detectProxyAbort(cfg, "/v1/chat/completions", resp.StatusCode, string(respBody)); pe != nil {
+			return "", pe
+		}
 		return "", fmt.Errorf("generation returned %d: %s", resp.StatusCode, string(respBody))
 	}
 

@@ -6,10 +6,16 @@ GitHub Copilot CLI (`copilot`) is an agentic terminal client powered by the same
 
 - `copilot` installed and authenticated with an active Copilot subscription.
 - `tpatch` ≥ `0.3.1`.
-- A configured tpatch provider. If you use copilot-api for both copilot-cli and tpatch, the same token works for both:
+- A configured tpatch provider. The local copilot-api proxy strips and
+  replaces inbound auth headers with its own session token (see
+  `lib/api-config.ts:copilotHeaders` in copilot-api), so you do **not**
+  need to set `--auth-env`:
   ```bash
-  tpatch provider set --preset copilot --auth-env GITHUB_TOKEN
+  tpatch provider set --preset copilot
   ```
+  If you want to forward `GITHUB_TOKEN` for visibility in the proxy
+  logs, you can still pass `--auth-env GITHUB_TOKEN`; it's a no-op on
+  the upstream call.
 - A `.github/copilot/cli/skills/` entry for tpatch (we ship one via `tpatch init` to `.tpatch/steering/`; copy or symlink the `assets/skills/copilot/` skill file into the repo-level skill directory if you want Copilot CLI to discover it automatically).
 
 ## The copilot-api proxy (M10)
@@ -45,6 +51,41 @@ If the proxy is not reachable at `localhost:4141`:
 - `tpatch analyze|define|explore|implement|cycle` hard-fail with an install
   pointer before starting the LLM call. This keeps heuristic fallbacks
   explicit rather than silent.
+
+### Smart endpoint routing (M10+)
+
+The copilot-api proxy advertises per-model `supported_endpoints` on
+`/v1/models`. tpatch reads that metadata during the reachability probe
+and transparently picks the matching wire format:
+
+| Model advertises | Provider used | Wire route |
+|------------------|---------------|------------|
+| `/v1/messages` (Claude `opus-4.6`, `sonnet-4`, ...) | Anthropic Messages | `POST /v1/messages` |
+| `/responses` only (GPT-5.x, `o1` family) | *(not yet supported — see below)* | — |
+| `/chat/completions` (GPT-4o, legacy models) | OpenAI Chat Completions | `POST /v1/chat/completions` |
+
+This means `--type anthropic` is no longer required for Claude models on
+the proxy — `--preset copilot --model claude-opus-4.6` Just Works. If
+you set `TPATCH_NO_PROBE=1` to skip the reachability probe, smart
+routing is also skipped and tpatch falls back to whatever wire type the
+preset configured.
+
+#### `/responses`-only models
+
+Models that *only* advertise `/responses` (today: `gpt-5.5`, `gpt-5.4`,
+`o1-mini`, etc.) currently surface a `ProxyUpstreamAbortedError`. The
+copilot-api proxy does route the request to its `/responses` handler,
+but the upstream Copilot fetch is aborted before a response arrives.
+There is no client-side workaround — pick a model that supports
+`/v1/messages` or `/chat/completions` until the upstream proxy fix
+ships.
+
+> **Experimental opt-in.** A `ResponsesProvider` is wired into
+> `internal/provider/responses.go` behind the
+> `TPATCH_ENABLE_RESPONSES_PROVIDER=1` environment variable. When the
+> upstream proxy fix lands, set the env var (or remove the gate in
+> `PickProvider`) to route `/responses`-only models through it
+> directly. The wire format is already correct — see ADR-014.
 
 The proxy is reverse-engineered, not supported by GitHub, and may trigger
 abuse-detection if hit too aggressively. See ADR-004 for the UX rationale and

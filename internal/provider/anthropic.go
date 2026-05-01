@@ -41,7 +41,7 @@ func anthropicBaseURL(cfg Config) string {
 // listing endpoint, so we return a single-entry list containing the configured model.
 func (p *AnthropicProvider) Check(ctx context.Context, cfg Config) (*Health, error) {
 	token := cfg.Token()
-	if token == "" {
+	if token == "" && !IsCopilotProxyEndpoint(cfg) {
 		return nil, fmt.Errorf("anthropic: missing auth token (set %s env var)", cfg.AuthEnv)
 	}
 	url := anthropicBaseURL(cfg) + "/v1/messages"
@@ -56,7 +56,9 @@ func (p *AnthropicProvider) Check(ctx context.Context, cfg Config) (*Health, err
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", token)
+	if token != "" {
+		req.Header.Set("x-api-key", token)
+	}
 	req.Header.Set("anthropic-version", anthropicVersion)
 
 	resp, err := p.client.Do(req)
@@ -75,7 +77,7 @@ func (p *AnthropicProvider) Check(ctx context.Context, cfg Config) (*Health, err
 // Generate sends a messages request and returns the concatenated text content.
 func (p *AnthropicProvider) Generate(ctx context.Context, cfg Config, req GenerateRequest) (string, error) {
 	token := cfg.Token()
-	if token == "" {
+	if token == "" && !IsCopilotProxyEndpoint(cfg) {
 		return "", fmt.Errorf("anthropic: missing auth token (set %s env var)", cfg.AuthEnv)
 	}
 	url := anthropicBaseURL(cfg) + "/v1/messages"
@@ -108,7 +110,9 @@ func (p *AnthropicProvider) Generate(ctx context.Context, cfg Config, req Genera
 		return "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", token)
+	if token != "" {
+		httpReq.Header.Set("x-api-key", token)
+	}
 	httpReq.Header.Set("anthropic-version", anthropicVersion)
 
 	resp, err := p.client.Do(httpReq)
@@ -119,6 +123,9 @@ func (p *AnthropicProvider) Generate(ctx context.Context, cfg Config, req Genera
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+		if pe := detectProxyAbort(cfg, "/v1/messages", resp.StatusCode, string(respBody)); pe != nil {
+			return "", pe
+		}
 		return "", fmt.Errorf("generation returned %d: %s", resp.StatusCode, string(respBody))
 	}
 

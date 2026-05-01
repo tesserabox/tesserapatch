@@ -61,22 +61,27 @@ func maybeShowAUPWarning(w io.Writer, cfg provider.Config) {
 // endpoints (copilot-api, Ollama) it returns a descriptive error if
 // unreachable so workflow commands can hard-fail with an actionable
 // install hint. For remote endpoints it trusts the user's network and
-// returns nil without probing.
+// returns (nil, nil) without probing.
 //
 // Per ADR-004 D4: only scoped to local endpoints to avoid penalising
 // custom remote configurations where a 2s probe might be unreliable.
-func ensureProviderReachable(ctx context.Context, cfg provider.Config) error {
+//
+// Returns the resolved *provider.Health when the probe succeeded, so
+// callers can feed PickProvider the model metadata they need without
+// re-issuing /v1/models.
+func ensureProviderReachable(ctx context.Context, cfg provider.Config) (*provider.Health, error) {
 	if !provider.IsLocalEndpoint(cfg) {
-		return nil
+		return nil, nil
 	}
-	if err := provider.Reachable(ctx, cfg); err != nil {
+	health, err := provider.Probe(ctx, cfg)
+	if err != nil {
 		msg := err.Error()
 		if provider.IsCopilotProxyEndpoint(cfg) {
 			msg = strings.TrimSpace(msg) + "\n\n" + copilotInstallHint()
 		}
-		return fmt.Errorf("provider at %s is unreachable: %s", cfg.BaseURL, msg)
+		return nil, fmt.Errorf("provider at %s is unreachable: %s", cfg.BaseURL, msg)
 	}
-	return nil
+	return health, nil
 }
 
 // warnIfUnreachable runs a reachability probe and writes a user-facing

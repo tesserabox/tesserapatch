@@ -66,11 +66,20 @@ func TestIsCopilotProxyEndpoint(t *testing.T) {
 	if !IsCopilotProxyEndpoint(Config{Type: "openai-compatible", BaseURL: "http://localhost:4141"}) {
 		t.Error("localhost:4141 with openai-compatible should be copilot proxy")
 	}
-	if IsCopilotProxyEndpoint(Config{Type: "anthropic", BaseURL: "http://localhost:4141"}) {
-		t.Error("anthropic type should not be copilot proxy")
+	// Both openai-compatible and anthropic are accepted: the proxy
+	// serves /chat/completions, /responses, and /v1/messages from the
+	// same port and users may configure either wire protocol.
+	if !IsCopilotProxyEndpoint(Config{Type: "anthropic", BaseURL: "http://localhost:4141"}) {
+		t.Error("localhost:4141 with anthropic should be copilot proxy")
 	}
 	if IsCopilotProxyEndpoint(Config{Type: "openai-compatible", BaseURL: "https://api.openai.com/v1"}) {
 		t.Error("openai URL should not be copilot proxy")
+	}
+	if IsCopilotProxyEndpoint(Config{Type: "anthropic", BaseURL: "https://api.anthropic.com"}) {
+		t.Error("anthropic URL should not be copilot proxy")
+	}
+	if IsCopilotProxyEndpoint(Config{Type: CopilotNativeType, BaseURL: ""}) {
+		t.Error("copilot-native should not be copilot proxy")
 	}
 }
 

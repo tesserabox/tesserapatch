@@ -82,6 +82,58 @@ func TestAnthropicMissingAuth(t *testing.T) {
 	}
 }
 
+// TestAnthropicProxyEmptyTokenIntegration uses httptest with the
+// testForceCopilotProxy hook so the no-token bypass exercises end-to-
+// end without binding the privileged :4141 port (which the user's
+// real proxy may already own).
+func TestAnthropicProxyEmptyTokenIntegration(t *testing.T) {
+	defer setForceCopilotProxy(true)()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "" {
+			t.Errorf("x-api-key should not be set when token is empty, got %q", r.Header.Get("x-api-key"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]string{{"type": "text", "text": "ok"}},
+		})
+	}))
+	defer srv.Close()
+
+	cfg := Config{Type: "openai-compatible", BaseURL: srv.URL, Model: "claude-opus-4.6"}
+	if !IsCopilotProxyEndpoint(cfg) {
+		t.Fatal("test setup: cfg should be detected as copilot proxy")
+	}
+	p := NewAnthropic()
+	out, err := p.Generate(context.Background(), cfg, GenerateRequest{UserPrompt: "hi"})
+	if err != nil {
+		t.Fatalf("Generate on proxy without token: %v", err)
+	}
+	if out != "ok" {
+		t.Fatalf("output = %q, want ok", out)
+	}
+}
+
+// TestAnthropicProxyAbortDetected exercises the typed-error path: when
+// the proxy returns its 500 + "This operation was aborted" body,
+// Generate must surface a *ProxyUpstreamAbortedError, not a generic
+// "generation returned 500" string.
+func TestAnthropicProxyAbortDetected(t *testing.T) {
+	defer setForceCopilotProxy(true)()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"This operation was aborted"}`))
+	}))
+	defer srv.Close()
+
+	cfg := Config{Type: "openai-compatible", BaseURL: srv.URL, Model: "claude-opus-4.6"}
+	p := NewAnthropic()
+	_, err := p.Generate(context.Background(), cfg, GenerateRequest{UserPrompt: "hi"})
+	if !IsProxyUpstreamAborted(err) {
+		t.Fatalf("expected ProxyUpstreamAbortedError, got %v", err)
+	}
+}
+
 func TestNewFromConfig(t *testing.T) {
 	cases := []struct {
 		typ     string
